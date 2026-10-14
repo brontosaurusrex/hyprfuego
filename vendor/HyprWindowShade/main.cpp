@@ -1,0 +1,625 @@
+#include "Globals.hpp"
+
+// Hyprland (v0.56) links liblua.so.5.5 and /usr/include/lua.h is 5.5; symbols
+// resolve from the host process at dlopen, so we don't link -llua ourselves.
+#include <lua.hpp>
+
+// --- DEFINE EXTERN VARIABLES ---
+HANDLE                                                PHANDLE = nullptr;
+std::vector<CHyprSignalListener>                      g_Listeners;
+std::unordered_map<Desktop::View::CWindow*, std::string>        g_mWindowManualShaders;
+std::unordered_map<Desktop::View::CWindow*, WindowShaderState>  g_mWindowRuleShaders;
+std::map<std::string, std::string>                    g_mLayerNamespaceShaderMap;
+std::map<std::string, std::string>                    g_mWindowClassShaderMap;
+std::map<std::string, CompiledShader>                 g_mCompiledCShaders;
+std::map<std::string, time_t>                         g_mFailedShaderMtimes;
+std::map<std::string, time_t>                         g_mDurationWarnedMtimes;
+std::map<std::string, AnimSpec>                       g_mLayerOpenAnims;
+std::map<std::string, AnimSpec>                       g_mLayerCloseAnims;
+std::unordered_map<Desktop::View::CWindow*, std::chrono::steady_clock::time_point> g_mWindowOpenTimes;
+std::unordered_map<Desktop::View::CLayerSurface*, std::chrono::steady_clock::time_point> g_mLayerOpenTimes;
+std::unordered_map<Desktop::IFadeout*, FadeoutAnim>   g_mFadeoutAnims;
+std::unordered_map<Desktop::View::CWindow*, MotionRecord> g_mWindowMotion;
+std::unordered_map<Desktop::View::CWindow*, OneShotAnim>  g_mWindowOneShots;
+std::unordered_map<Desktop::View::CWindow*, RetimedMove> g_mRetimedMoves;
+PreCloseSnapshot                                      g_preCloseSnapshot;
+PendingLayerRetime                                    g_pendingLayerRetime;
+CFunctionHook*                                        g_pGLDrawTexHook          = nullptr;
+CFunctionHook*                                        g_pUseShaderHook          = nullptr;
+CFunctionHook*                                        g_pFadeoutCreateHook      = nullptr;
+CFunctionHook*                                        g_pFadeoutDoneHook        = nullptr;
+CFunctionHook*                                        g_pLayerFadeoutCreateHook = nullptr;
+CFunctionHook*                                        g_pLayerFadeoutDoneHook   = nullptr;
+CFunctionHook*                                        g_pFadeoutRenderBoxHook      = nullptr;
+CFunctionHook*                                        g_pLayerFadeoutRenderBoxHook = nullptr;
+CFunctionHook*                                        g_pArrangeLayersHook         = nullptr;
+
+// Tracks the most recently activated window so togglewindowshader doesn't have
+// to linear-scan Desktop::windowState()->windows() asking isWindowActive on each.
+static PHLWINDOWREF g_lastActiveWindow;
+
+// --- HELPERS ---
+static inline void trimInPlace(std::string& s) {
+    size_t start = s.find_first_not_of(" \t");
+    if (start == std::string::npos) { s.clear(); return; }
+    s.erase(0, start);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+}
+
+// Splits "<key> <value...>" into trimmed (key, value). Returns false if no separator.
+// Recognizes a leading double-quoted key so class names or layer namespaces that
+// contain whitespace work via the .conf dispatchers, matching the per-arg shape
+// Lua callers already get. Escapes inside the quoted string are not supported —
+// keep it to plain whitespace handling, which is all the realistic case needs.
+static bool splitTwo(const std::string& args, std::string& key, std::string& value) {
+    size_t pos = 0;
+    while (pos < args.size() && (args[pos] == ' ' || args[pos] == '\t')) pos++;
+    if (pos >= args.size()) return false;
+
+    size_t keyEnd;
+    if (args[pos] == '"') {
+        const size_t closing = args.find('"', pos + 1);
+        if (closing == std::string::npos) return false;
+        key    = args.substr(pos + 1, closing - pos - 1);
+        keyEnd = closing + 1;
+    } else {
+        const size_t ws = args.find_first_of(" \t", pos);
+        if (ws == std::string::npos) return false;
+        key    = args.substr(pos, ws - pos);
+        keyEnd = ws;
+    }
+
+    if (keyEnd >= args.size()) return false;
+    value = args.substr(keyEnd);
+    trimInPlace(value);
+    return !value.empty();
+}
+
+// --- SHARED DISPATCH/LUA ACTIONS ---
+// Each function below is the canonical body of one shader action. Both the
+// .conf-style dispatcher lambdas (which still parse one string via splitTwo)
+// and the Lua C wrappers (which read separate args from the Lua stack) call
+// these — keeping behavior identical across both call sites.
+namespace shadeActions {
+    static void setLayerShader(const std::string& ns, const std::string& path) {
+        if (path == "clear" || path == "none") g_mLayerNamespaceShaderMap.erase(ns);
+        else                                   g_mLayerNamespaceShaderMap[ns] = path;
+    }
+
+    // Layer open/close animations. Same "clear"/"none" convention as the layer
+    // shader setters above; the path may carry an `@<sec>` duration override.
+    static void setLayerOpenAnim(const std::string& ns, const std::string& arg) {
+        if (arg == "clear" || arg == "none") g_mLayerOpenAnims.erase(ns);
+        else                                 g_mLayerOpenAnims[ns] = parseAnimSpec(arg);
+    }
+
+    static void setLayerCloseAnim(const std::string& ns, const std::string& arg) {
+        if (arg == "clear" || arg == "none") g_mLayerCloseAnims.erase(ns);
+        else                                 g_mLayerCloseAnims[ns] = parseAnimSpec(arg);
+    }
+
+    static void toggleLayerShader(const std::string& ns, const std::string& path) {
+        if (g_mLayerNamespaceShaderMap.find(ns) != g_mLayerNamespaceShaderMap.end())
+            g_mLayerNamespaceShaderMap.erase(ns);
+        else
+            g_mLayerNamespaceShaderMap[ns] = path;
+    }
+
+    static void toggleWindowShader(const std::string& path) {
+        if (path.empty()) return;
+
+        PHLWINDOW pWindow = g_lastActiveWindow.lock();
+        if (!pWindow) return;
+
+        Desktop::View::CWindow* rawWin = pWindow.get();
+        if (path == "clear" || path == "none" || g_mWindowManualShaders.find(rawWin) != g_mWindowManualShaders.end())
+            g_mWindowManualShaders.erase(rawWin);
+        else
+            g_mWindowManualShaders[rawWin] = path;
+        g_pHyprRenderer->damageWindow(pWindow);
+    }
+
+    static void setClassShader(const std::string& cls, const std::string& path) {
+        if (path == "clear" || path == "none") g_mWindowClassShaderMap.erase(cls);
+        else                                   g_mWindowClassShaderMap[cls] = path;
+
+        for (auto& w : Desktop::windowState()->windows())
+            if (w && (w->m_initialClass == cls || w->m_class == cls))
+                g_pHyprRenderer->damageWindow(w);
+    }
+
+    static void toggleClassShader(const std::string& cls, const std::string& path) {
+        if (g_mWindowClassShaderMap.find(cls) != g_mWindowClassShaderMap.end())
+            g_mWindowClassShaderMap.erase(cls);
+        else
+            g_mWindowClassShaderMap[cls] = path;
+
+        for (auto& w : Desktop::windowState()->windows())
+            if (w && (w->m_initialClass == cls || w->m_class == cls))
+                g_pHyprRenderer->damageWindow(w);
+    }
+
+    static void reloadShaders() {
+        g_mCompiledCShaders.clear();
+        g_mFailedShaderMtimes.clear();
+        // Same intent as the failure cache: an explicit reload means "report
+        // everything again", including animation shaders missing a duration.
+        g_mDurationWarnedMtimes.clear();
+        // damageMonitor, not scheduleFrame: a scheduled frame with a clean damage
+        // ring reaches renderMonitor() and stops there, because the draw itself
+        // sits behind `if (!finalDamage.empty())`. Nothing would be redrawn with
+        // the newly compiled shaders. This also covers every window, every layer
+        // and every fadeout on the monitor in one call.
+        //
+        // damageMonitor skips mirrors, and that is correct rather than a gap: a
+        // mirror is never damaged directly. renderMonitor damages each mirror
+        // from its SOURCE's frame damage on the way out, so damaging the sources
+        // here — which this loop does — is what carries a reload to them.
+        for (auto& m : State::monitorState()->monitors()) if (m) g_pHyprRenderer->damageMonitor(m);
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] Shaders Reloaded from Disk!", CHyprColor(0.2f, 1.0f, 0.2f, 1.0f), 3000.0f);
+    }
+}
+
+// --- LUA C WRAPPERS ---
+// Registered via HyprlandAPI::addLuaFunction so users on Lua-based Hyprland
+// configs can bind keys like: function() hl.plugin.HyprWindowShade.<name>(...) end
+// (Native Hyprland dispatchers from plugins aren't surfaced to the Lua config
+// layer, per vaxry — Lua functions are the supported workaround.)
+static int luaLayerShader(lua_State* L) {
+    shadeActions::setLayerShader(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaToggleLayerShader(lua_State* L) {
+    shadeActions::toggleLayerShader(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaToggleWindowShader(lua_State* L) {
+    shadeActions::toggleWindowShader(luaL_checkstring(L, 1));
+    return 0;
+}
+static int luaClassShader(lua_State* L) {
+    shadeActions::setClassShader(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaToggleClassShader(lua_State* L) {
+    shadeActions::toggleClassShader(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaLayerOpenAnim(lua_State* L) {
+    shadeActions::setLayerOpenAnim(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaLayerCloseAnim(lua_State* L) {
+    shadeActions::setLayerCloseAnim(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return 0;
+}
+static int luaReloadShaders(lua_State* L) {
+    (void)L;
+    shadeActions::reloadShaders();
+    return 0;
+}
+
+APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
+
+APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+    PHANDLE = handle;
+
+    if (!initEarlySnapshotHook())
+        throw std::runtime_error("Hyprfuego: required null-buffer snapshot hook could not be installed");
+
+    // --- V0.56 HOOK 1: CGLElementRenderer::draw(CTexPassElement, CRegion) ---
+    // The concrete, exported method that draws every textured surface element.
+    // Hyprland's findFunctionsByName matches the MANGLED `nm -D -j` dump but fills
+    // SFunctionMatch::demangled by line index into a second, demangled dump — and its
+    // `if (!address) continue;` skips the lineNo++. Every match whose dlsym() fails
+    // (any `sym@VERSION` import, which dlsym never resolves) therefore shifts the
+    // demangled field of all later matches out of alignment. Searching "create" hits
+    // timerfd_create@GLIBC_2.8 and libinput_config_accel_create@LIBINPUT_1.23, so
+    // demangled lands 2 symbols early and every fadeout lookup silently missed.
+    // Match on m.signature — the raw mangled line that matched — which is always right.
+    // The digits are Itanium ABI name lengths (13CLayerFadeout, 14CWindowFadeout...).
+    auto methodsDraw = HyprlandAPI::findFunctionsByName(PHANDLE, "draw");
+    void* drawAddr = nullptr;
+    for (auto& m : methodsDraw) {
+        if (m.signature.find("18CGLElementRenderer4draw") != std::string::npos &&
+            m.signature.find("15CTexPassElement")         != std::string::npos) {
+            drawAddr = m.address;
+            break;
+        }
+    }
+    if (drawAddr) {
+        g_pGLDrawTexHook = HyprlandAPI::createFunctionHook(PHANDLE, drawAddr, (void*)&hkGLDrawTex);
+        g_pGLDrawTexHook->hook();
+    } else {
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] FATAL: CGLElementRenderer::draw(CTexPassElement) not found!", CHyprColor(1.0f, 0.0f, 0.0f, 1.0f), 10000.0f);
+    }
+
+    // --- V0.56 HOOK 2: useShader ---
+    auto methodsUse = HyprlandAPI::findFunctionsByName(PHANDLE, "useShader");
+    void* useAddr = nullptr;
+    for (auto& m : methodsUse) {
+        if (m.signature.find("15CHyprOpenGLImpl9useShader") != std::string::npos) {
+            useAddr = m.address;
+            break;
+        }
+    }
+    if (useAddr) {
+        g_pUseShaderHook = HyprlandAPI::createFunctionHook(PHANDLE, useAddr, (void*)&hkUseShader);
+        g_pUseShaderHook->hook();
+    } else {
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] FATAL: useShader not found!", CHyprColor(1.0f, 0.0f, 0.0f, 1.0f), 10000.0f);
+    }
+
+    // --- V0.56 HOOK 3+4: close animations (optional) ---
+    // Both live on Desktop::CWindowFadeout. If either is missing we simply don't
+    // do close animations — everything else keeps working.
+    // findFunctionsByName is documented as slow, so both symbol lists are walked
+    // once and all four addresses picked out of them.
+    auto  methodsCreate         = HyprlandAPI::findFunctionsByName(PHANDLE, "create");
+    void* fadeoutCreateAddr     = nullptr;
+    void* layerFadeoutCreateAddr = nullptr;
+    for (auto& m : methodsCreate) {
+        if (!fadeoutCreateAddr && m.signature.find("14CWindowFadeout6create") != std::string::npos)
+            fadeoutCreateAddr = m.address;
+        else if (!layerFadeoutCreateAddr && m.signature.find("13CLayerFadeout6create") != std::string::npos)
+            layerFadeoutCreateAddr = m.address;
+
+        if (fadeoutCreateAddr && layerFadeoutCreateAddr) break;
+    }
+
+    auto  methodsDone         = HyprlandAPI::findFunctionsByName(PHANDLE, "done");
+    void* fadeoutDoneAddr     = nullptr;
+    void* layerFadeoutDoneAddr = nullptr;
+    for (auto& m : methodsDone) {
+        if (!fadeoutDoneAddr && m.signature.find("14CWindowFadeout4done") != std::string::npos)
+            fadeoutDoneAddr = m.address;
+        else if (!layerFadeoutDoneAddr && m.signature.find("13CLayerFadeout4done") != std::string::npos)
+            layerFadeoutDoneAddr = m.address;
+
+        if (fadeoutDoneAddr && layerFadeoutDoneAddr) break;
+    }
+
+    // renderBox holds the snapshot still for the shader's declared duration. Looked
+    // up separately because it is optional: without it close animations still run,
+    // they just collapse on Hyprland's schedule the way they always did.
+    auto  methodsRenderBox         = HyprlandAPI::findFunctionsByName(PHANDLE, "renderBox");
+    void* fadeoutRenderBoxAddr     = nullptr;
+    void* layerFadeoutRenderBoxAddr = nullptr;
+    for (auto& m : methodsRenderBox) {
+        if (!fadeoutRenderBoxAddr && m.signature.find("14CWindowFadeout9renderBox") != std::string::npos)
+            fadeoutRenderBoxAddr = m.address;
+        else if (!layerFadeoutRenderBoxAddr && m.signature.find("13CLayerFadeout9renderBox") != std::string::npos)
+            layerFadeoutRenderBoxAddr = m.address;
+
+        if (fadeoutRenderBoxAddr && layerFadeoutRenderBoxAddr) break;
+    }
+
+    // Window and layer close animations are installed independently, so one
+    // missing symbol doesn't take the other down with it.
+    if (fadeoutCreateAddr && fadeoutDoneAddr) {
+        g_pFadeoutCreateHook = HyprlandAPI::createFunctionHook(PHANDLE, fadeoutCreateAddr, (void*)&hkFadeoutCreate);
+        g_pFadeoutDoneHook   = HyprlandAPI::createFunctionHook(PHANDLE, fadeoutDoneAddr,   (void*)&hkFadeoutDone);
+        g_pFadeoutCreateHook->hook();
+        g_pFadeoutDoneHook->hook();
+        if (fadeoutRenderBoxAddr) {
+            g_pFadeoutRenderBoxHook = HyprlandAPI::createFunctionHook(PHANDLE, fadeoutRenderBoxAddr, (void*)&hkFadeoutRenderBox);
+            g_pFadeoutRenderBoxHook->hook();
+        }
+    } else {
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] CWindowFadeout hooks not found — shader_close: disabled.",
+                                     CHyprColor(1.0f, 0.7f, 0.2f, 1.0f), 8000.0f);
+    }
+
+    if (layerFadeoutCreateAddr && layerFadeoutDoneAddr) {
+        g_pLayerFadeoutCreateHook = HyprlandAPI::createFunctionHook(PHANDLE, layerFadeoutCreateAddr, (void*)&hkLayerFadeoutCreate);
+        g_pLayerFadeoutDoneHook   = HyprlandAPI::createFunctionHook(PHANDLE, layerFadeoutDoneAddr,   (void*)&hkLayerFadeoutDone);
+        g_pLayerFadeoutCreateHook->hook();
+        g_pLayerFadeoutDoneHook->hook();
+        if (layerFadeoutRenderBoxAddr) {
+            g_pLayerFadeoutRenderBoxHook = HyprlandAPI::createFunctionHook(PHANDLE, layerFadeoutRenderBoxAddr, (void*)&hkLayerFadeoutRenderBox);
+            g_pLayerFadeoutRenderBoxHook->hook();
+        }
+    } else {
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] CLayerFadeout hooks not found — layercloseanim disabled.",
+                                     CHyprColor(1.0f, 0.7f, 0.2f, 1.0f), 8000.0f);
+    }
+
+    // --- V0.56 HOOK 5: arrangeLayersForMonitor (optional) ---
+    // Lets a closing layer's reflow be retimed inside the same onUnmap call that
+    // caused it, rather than a frame later where unrelated motion could be
+    // mistaken for it. Purely additive: without it layer closes keep vanilla
+    // reflow timing and everything else is unaffected.
+    auto  methodsArrange = HyprlandAPI::findFunctionsByName(PHANDLE, "arrangeLayersForMonitor");
+    void* arrangeAddr    = nullptr;
+    for (auto& m : methodsArrange) {
+        if (m.signature.find("13IHyprRenderer23arrangeLayersForMonitor") != std::string::npos) {
+            arrangeAddr = m.address;
+            break;
+        }
+    }
+    if (arrangeAddr) {
+        g_pArrangeLayersHook = HyprlandAPI::createFunctionHook(PHANDLE, arrangeAddr, (void*)&hkArrangeLayersForMonitor);
+        g_pArrangeLayersHook->hook();
+    } else {
+        HyprlandAPI::addNotification(PHANDLE, "[HyprWindowShade] arrangeLayersForMonitor not found — layer closes won't retime the reflow.",
+                                     CHyprColor(1.0f, 0.7f, 0.2f, 1.0f), 8000.0f);
+    }
+
+    // --- LISTENERS ---
+    g_Listeners.push_back(Event::bus()->m_events.window.updateRules.listen([](PHLWINDOW window) {
+        try { applyShaderRulesSafe(window); } catch (...) {}
+    }));
+
+    // Record only WHEN the window opened. The shader itself is resolved at first
+    // draw, because window.open and updateRules have no guaranteed ordering and
+    // reading the rule here would silently miss whenever open fires first.
+    g_Listeners.push_back(Event::bus()->m_events.window.open.listen([](PHLWINDOW window) {
+        if (!window) return;
+        g_mWindowOpenTimes[window.get()] = std::chrono::steady_clock::now();
+        g_pHyprRenderer->damageWindow(window);
+    }));
+
+    // Fires inside CWindow::unmapWindow, before the layout detaches the closing
+    // window — the last moment the workspace can be measured as it was. What the
+    // reflow does with that is decided later, once the fadeout exists and the
+    // close shader is known; see retimeMovesForClose.
+    g_Listeners.push_back(Event::bus()->m_events.window.close.listen([](PHLWINDOW window) {
+        if (!window) return;
+        try { capturePreCloseGoals(window.get(), window.get()); } catch (...) {}
+    }));
+
+    // Same for layer surfaces — bars, notifications, rofi/wofi. Layers have no
+    // destroy event on the bus, so `closed` doubles as the cleanup point.
+    g_Listeners.push_back(Event::bus()->m_events.layer.opened.listen([](PHLLS layer) {
+        if (!layer) return;
+        g_mLayerOpenTimes[layer.get()] = std::chrono::steady_clock::now();
+        // Same reason as reloadShaders: scheduleFrame() alone wakes the output
+        // but leaves the damage ring clean, and renderMonitor() draws nothing.
+        // A layer open animation on an otherwise idle monitor would never get
+        // its first frame. A mirror cannot reach here — it renders through
+        // renderMirrored(), which never walks the layer path.
+        if (auto mon = layer->m_monitor.lock())
+            g_pHyprRenderer->damageMonitor(mon);
+    }));
+
+    g_Listeners.push_back(Event::bus()->m_events.layer.closed.listen([](PHLLS layer) {
+        if (!layer) return;
+        g_mLayerOpenTimes.erase(layer.get());
+        // Emitted at the top of CLayerSurface::onUnmap, before the exclusive
+        // zone is given up — so this is the last moment the tiled windows can be
+        // measured as the layer left them. An exclusive-zone layer closing
+        // reflows them exactly the way a tiled window close does; a layer that
+        // reserved nothing moves nothing, and the snapshot costs one walk.
+        try { capturePreCloseGoals(layer.get()); } catch (...) {}
+    }));
+
+    // Seed the cache from the current focus: window.active only fires on a
+    // CHANGE of focus, so without this a plugin loaded mid-session (i.e. every
+    // build.sh run) leaves g_lastActiveWindow empty and togglewindowshader
+    // silently does nothing until the user focuses something else.
+    if (Desktop::focusState())
+        g_lastActiveWindow = Desktop::focusState()->window();
+
+    g_Listeners.push_back(Event::bus()->m_events.window.active.listen([](auto window, auto reason) {
+        // Only the previously- and currently-active windows can change appearance.
+        if (auto prev = g_lastActiveWindow.lock(); prev && g_mWindowRuleShaders.find(prev.get()) != g_mWindowRuleShaders.end()) {
+            latchOneShot(prev.get(), ONESHOT_UNFOCUS);
+            g_pHyprRenderer->damageWindow(prev);
+        }
+        if (window && g_mWindowRuleShaders.find(window.get()) != g_mWindowRuleShaders.end()) {
+            latchOneShot(window.get(), ONESHOT_FOCUS);
+            g_pHyprRenderer->damageWindow(window);
+        }
+        g_lastActiveWindow = window;
+    }));
+
+    g_Listeners.push_back(Event::bus()->m_events.window.urgent.listen([](PHLWINDOW window) {
+        if (!window) return;
+        latchOneShot(window.get(), ONESHOT_URGENT);
+        g_pHyprRenderer->damageWindow(window);
+    }));
+
+    // Both listeners read the state AFTER the flip — measured, these events fire
+    // once the toggle has already taken effect, so the direction is whatever the
+    // window now reports rather than something that has to be tracked.
+    g_Listeners.push_back(Event::bus()->m_events.window.fullscreen.listen([](auto window) {
+        if (!window) return;
+        latchTransformFlavour(window.get(), Fullscreen::controller()->isFullscreen(window)
+                                                ? FLAVOUR_FULLSCREEN_ENTER : FLAVOUR_FULLSCREEN_EXIT);
+        g_pHyprRenderer->damageWindow(window);
+    }));
+
+    g_Listeners.push_back(Event::bus()->m_events.window.floating.listen([](PHLWINDOW window) {
+        if (!window) return;
+        latchTransformFlavour(window.get(), window->m_isFloating ? FLAVOUR_FLOAT : FLAVOUR_TILE);
+        g_pHyprRenderer->damageWindow(window);
+    }));
+
+    // Sample window motion once per frame, before anything is drawn, so every
+    // surface in the frame reads one consistent snapshot. Velocity has to be
+    // differentiated CPU-side — a fragment shader has no memory between frames —
+    // and doing it here rather than in the draw hook means a window with
+    // subsurfaces gets one velocity instead of one per surface.
+    g_Listeners.push_back(Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+        if (stage != RENDER_PRE_WINDOWS) return;
+        try { updateMotionRecords(); } catch (...) {}
+        // Cheap no-op unless a close is currently retiming a reflow.
+        try { tickRetimedMoves(); }    catch (...) {}
+    }));
+
+    // Drop entries keyed by raw CWindow* when the window is destroyed so they
+    // can't accidentally match a future window at the same address.
+    // V0.56: window.destroy emits PHLWINDOWREF (the shared ref is already gone
+    // by the time it fires), so take the weak ref and read the raw pointer off
+    // it — we only ever use it as a map key, never dereference it here.
+    g_Listeners.push_back(Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF window) {
+        if (!window) return;
+        Desktop::View::CWindow* rawWin = window.get();
+        g_mWindowManualShaders.erase(rawWin);
+        g_mWindowRuleShaders.erase(rawWin);
+        g_mWindowOpenTimes.erase(rawWin);
+        g_mWindowMotion.erase(rawWin);
+        g_mWindowOneShots.erase(rawWin);
+        // Drop, don't restore: the variables that referenced the retimed config
+        // died with the window, so there is nothing left to point back at
+        // windowsMove.
+        g_mRetimedMoves.erase(rawWin);
+        if (g_preCloseSnapshot.owner == rawWin) {
+            g_preCloseSnapshot.owner = nullptr;
+            g_preCloseSnapshot.goals.clear();
+        }
+        g_preCloseSnapshot.goals.erase(rawWin);
+    }));
+
+    // --- DISPATCHERS (.conf-style — Hyprland's native bind path) ---
+
+    // A dispatcher that can't parse its arguments has to say so: SDispatchResult
+    // defaults to success = true, so returning a bare {} made `hyprctl dispatch
+    // layershader rofi` print "ok" while doing nothing at all.
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "layershader", [](std::string args) -> SDispatchResult {
+        std::string ns, path;
+        if (!splitTwo(args, ns, path))
+            return SDispatchResult{.success = false, .error = "usage: layershader <namespace> <path|clear|none>"};
+        shadeActions::setLayerShader(ns, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "togglelayershader", [](std::string args) -> SDispatchResult {
+        std::string ns, path;
+        if (!splitTwo(args, ns, path))
+            return SDispatchResult{.success = false, .error = "usage: togglelayershader <namespace> <path>"};
+        shadeActions::toggleLayerShader(ns, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "togglewindowshader", [](std::string path) -> SDispatchResult {
+        trimInPlace(path);
+        if (path.empty())
+            return SDispatchResult{.success = false, .error = "usage: togglewindowshader <path|clear|none>"};
+        shadeActions::toggleWindowShader(path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "classshader", [](std::string args) -> SDispatchResult {
+        std::string cls, path;
+        if (!splitTwo(args, cls, path))
+            return SDispatchResult{.success = false, .error = "usage: classshader <class> <path|clear|none>"};
+        shadeActions::setClassShader(cls, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "toggleclassshader", [](std::string args) -> SDispatchResult {
+        std::string cls, path;
+        if (!splitTwo(args, cls, path))
+            return SDispatchResult{.success = false, .error = "usage: toggleclassshader <class> <path>"};
+        shadeActions::toggleClassShader(cls, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "layeropenanim", [](std::string args) -> SDispatchResult {
+        std::string ns, path;
+        if (!splitTwo(args, ns, path))
+            return SDispatchResult{.success = false, .error = "usage: layeropenanim <namespace> <path[@sec]|clear|none>"};
+        shadeActions::setLayerOpenAnim(ns, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "layercloseanim", [](std::string args) -> SDispatchResult {
+        std::string ns, path;
+        if (!splitTwo(args, ns, path))
+            return SDispatchResult{.success = false, .error = "usage: layercloseanim <namespace> <path[@sec]|clear|none>"};
+        shadeActions::setLayerCloseAnim(ns, path);
+        return SDispatchResult{};
+    });
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "reloadshaders", [](std::string) -> SDispatchResult {
+        shadeActions::reloadShaders();
+        return SDispatchResult{};
+    });
+
+    // --- LUA FUNCTIONS (hl.plugin.HyprWindowShade.* — for Lua-based configs) ---
+    // Removed automatically on plugin unload (per PluginAPI.hpp), but PLUGIN_EXIT
+    // calls removeLuaFunction defensively to keep teardown symmetric.
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layershader",        &luaLayerShader);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "togglelayershader",  &luaToggleLayerShader);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "togglewindowshader", &luaToggleWindowShader);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "classshader",        &luaClassShader);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "toggleclassshader",  &luaToggleClassShader);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layeropenanim",      &luaLayerOpenAnim);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layercloseanim",     &luaLayerCloseAnim);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "reloadshaders",      &luaReloadShaders);
+
+    // Version is deliberately empty: releases are GitHub tags, and hyprpm ships
+    // whatever commit `commit_pins` names. A number maintained here would be a
+    // second source of truth that silently drifts from both.
+    return {"HyprWindowShade", "Native CShader Injection (v0.56)", "ManofJELLO", ""};
+}
+
+APICALL EXPORT void PLUGIN_EXIT() {
+    g_Listeners.clear();
+
+    g_mWindowManualShaders.clear();
+    g_mWindowRuleShaders.clear();
+    g_mLayerNamespaceShaderMap.clear();
+    g_mWindowClassShaderMap.clear();
+    g_mFailedShaderMtimes.clear();
+    g_mDurationWarnedMtimes.clear();
+    g_mLayerOpenAnims.clear();
+    g_mLayerCloseAnims.clear();
+    g_mWindowOpenTimes.clear();
+    g_mLayerOpenTimes.clear();
+    g_mWindowMotion.clear();
+    g_mWindowOneShots.clear();
+    // Before the config objects go: an animated variable holds its config by
+    // CWeakPointer and cannot animate at all once that dangles, so a survivor
+    // left pointing at a freed config would stop animating for the rest of the
+    // session rather than merely finish this move on the wrong clock.
+    restoreAllRetimedMoves();
+    g_preCloseSnapshot.owner = nullptr;
+    g_preCloseSnapshot.goals.clear();
+    g_pendingLayerRetime = PendingLayerRetime{};
+    // Any fadeout we were holding open falls back to Hyprland's own `done` as
+    // soon as the hooks come off below.
+    g_mFadeoutAnims.clear();
+
+    // Intentionally leak compiled shaders: their CShader destructors call into
+    // GL state owned by Hyprland, which may already be torn down at this point.
+    // Moving the map into a heap allocation suppresses dtors at plugin unload.
+    auto leak = new std::map<std::string, CompiledShader>(std::move(g_mCompiledCShaders));
+    (void)leak;
+
+    // Same reasoning for the stacking render targets: CGLFramebuffer's
+    // destructor deletes GL objects. Drop the pointer and let the pool leak
+    // rather than tearing them down against a context that may be gone.
+    g_pStageFBs = nullptr;
+
+    cleanupEarlySnapshotHook();
+    if (g_pGLDrawTexHook)      HyprlandAPI::removeFunctionHook(PHANDLE, g_pGLDrawTexHook);
+    if (g_pUseShaderHook)      HyprlandAPI::removeFunctionHook(PHANDLE, g_pUseShaderHook);
+    if (g_pFadeoutCreateHook)      HyprlandAPI::removeFunctionHook(PHANDLE, g_pFadeoutCreateHook);
+    if (g_pFadeoutDoneHook)        HyprlandAPI::removeFunctionHook(PHANDLE, g_pFadeoutDoneHook);
+    if (g_pLayerFadeoutCreateHook) HyprlandAPI::removeFunctionHook(PHANDLE, g_pLayerFadeoutCreateHook);
+    if (g_pLayerFadeoutDoneHook)   HyprlandAPI::removeFunctionHook(PHANDLE, g_pLayerFadeoutDoneHook);
+    if (g_pFadeoutRenderBoxHook)      HyprlandAPI::removeFunctionHook(PHANDLE, g_pFadeoutRenderBoxHook);
+    if (g_pLayerFadeoutRenderBoxHook) HyprlandAPI::removeFunctionHook(PHANDLE, g_pLayerFadeoutRenderBoxHook);
+    if (g_pArrangeLayersHook)         HyprlandAPI::removeFunctionHook(PHANDLE, g_pArrangeLayersHook);
+
+    HyprlandAPI::removeDispatcher(PHANDLE, "layershader");
+    HyprlandAPI::removeDispatcher(PHANDLE, "togglelayershader");
+    HyprlandAPI::removeDispatcher(PHANDLE, "togglewindowshader");
+    HyprlandAPI::removeDispatcher(PHANDLE, "classshader");
+    HyprlandAPI::removeDispatcher(PHANDLE, "toggleclassshader");
+    HyprlandAPI::removeDispatcher(PHANDLE, "layeropenanim");
+    HyprlandAPI::removeDispatcher(PHANDLE, "layercloseanim");
+    HyprlandAPI::removeDispatcher(PHANDLE, "reloadshaders");
+
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layershader");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "togglelayershader");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "togglewindowshader");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "classshader");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "toggleclassshader");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layeropenanim");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layercloseanim");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "reloadshaders");
+}

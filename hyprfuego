@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""Build and manage a Compiz-inspired burn on close for HyprWindowShade."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent
+BUILD = ROOT / "build"
+SHADER = ROOT / "shaders/burn-close.glsl"
+VENDOR = ROOT / "vendor/HyprWindowShade"
+COMMIT = "efb50993780079460b0cbed1363e2166a2de1d9f"
+MAIN = Path.home() / ".config/hypr/hyprland.lua"
+MODULE = Path.home() / ".config/hypr/hyprfuego.lua"
+START, END = "-- BEGIN hyprfuego", "-- END hyprfuego"
+
+
+def run(*args, capture=True):
+    result = subprocess.run([str(a) for a in args], text=True,
+                            stdout=subprocess.PIPE if capture else None,
+                            stderr=subprocess.STDOUT if capture else None)
+    if result.returncode:
+        raise RuntimeError(f"Command failed: {' '.join(map(str, args))}\n{result.stdout or ''}")
+    return (result.stdout or "").strip()
+
+
+def ctl(*args):
+    reply = run("hyprctl", *args)
+    if re.search(r"(?im)^(?:error|err:|failed|couldn't|could not|unknown request)", reply):
+        raise RuntimeError(reply)
+    return reply
+
+
+def version():
+    try:
+        current = json.loads(ctl("-j", "version"))["commit"]
+    except (ValueError, KeyError, RuntimeError) as exc:
+        raise RuntimeError("Run this command in a terminal inside Hyprland.\n" + str(exc))
+    if current != COMMIT:
+        raise RuntimeError("Hyprfuego currently supports your tested Hyprland 0.56.2 commit only. "
+                           "The compositor has changed; rebuild/update the plugin integration first.")
+
+
+def configerrors():
+    errors = ctl("configerrors")
+    if errors:
+        raise RuntimeError("Hyprland config errors:\n" + errors)
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_atomic(path, text):
+    """Avoid Hyprland's config watcher reading a partial write."""
+    fd, temporary = tempfile.mkstemp(prefix="." + path.name, dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, path.stat().st_mode & 0o777 if path.exists() else 0o644)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def build():
+    prefix = run("pkg-config", "--variable=prefix", "hyprland")
+    header = Path(prefix) / "hyprland/src/version.h"
+    match = re.search(r'GIT_COMMIT_HASH\s+"([a-f0-9]+)"', header.read_text())
+    if not match or match[1] != COMMIT:
+        raise RuntimeError("Installed Hyprland headers differ from the tested 0.56.2 commit.")
+    BUILD.mkdir(exist_ok=True)
+    files = sorted(p for p in VENDOR.iterdir() if p.suffix in {".cpp", ".hpp"} or p.name == "Makefile")
+    fingerprint = hashlib.sha256("".join(digest(p) for p in files).encode()).hexdigest()[:16]
+    out = BUILD / f"{COMMIT[:12]}-{fingerprint}"
+    out.mkdir(exist_ok=True)
+    plugin = out / "HyprWindowShade.so"
+    previous = BUILD / "plugin.json"
+    if plugin.exists() and previous.exists():
+        metadata = json.loads(previous.read_text())
+        if metadata["path"] == str(plugin) and metadata["sha256"] != digest(plugin):
+            raise RuntimeError("Existing plugin checksum changed. Remove the damaged build directory and rebuild.")
+    if not plugin.exists():
+        temporary = out / "HyprWindowShade.so.build"
+        run("make", "-C", VENDOR, "-j1", "all", f"TARGET={temporary}", capture=False)
+        run("readelf", "-dW", temporary)
+        os.replace(temporary, plugin)
+        with plugin.open("rb") as stream:
+            os.fsync(stream.fileno())
+    manifest = {"commit": COMMIT, "path": str(plugin), "sha256": digest(plugin)}
+    write_atomic(BUILD / "plugin.json", json.dumps(manifest, indent=2) + "\n")
+    print("Build ready:", plugin, flush=True)
+    return plugin
+
+
+def artifact():
+    manifest = json.loads((BUILD / "plugin.json").read_text())
+    plugin = Path(manifest["path"])
+    if manifest["commit"] != COMMIT or not plugin.is_relative_to(BUILD) or digest(plugin) != manifest["sha256"]:
+        raise RuntimeError("Plugin metadata or checksum differs. Run ./hyprfuego build.")
+    return plugin
+
+
+def loaded():
+    return "HyprWindowShade" in ctl("plugin", "list")
+
+
+def owns_loaded(plugin):
+    # Verify the actual mapped path before touching a module another tool loaded.
+    for process in Path("/proc").iterdir():
+        if not process.name.isdecimal():
+            continue
+        try:
+            if (process / "comm").read_text().strip() == "Hyprland":
+                if str(plugin) in (process / "maps").read_text():
+                    return True
+        except (OSError, PermissionError):
+            continue
+    return False
+
+
+def load_plugin():
+    version()
+    plugin = artifact()
+    if loaded():
+        if not owns_loaded(plugin):
+            raise RuntimeError("Another HyprWindowShade build is already loaded; leaving it untouched.")
+        return False
+    print(ctl("plugin", "load", plugin))
+    if not loaded():
+        raise RuntimeError("HyprWindowShade did not register after loading.")
+    return True
+
+
+def reload_plugin():
+    """Replace our loaded binary after a C++ patch, preserving the close rules."""
+    version()
+    old = None
+    if loaded():
+        candidates = [p for p in BUILD.glob("*/HyprWindowShade.so") if owns_loaded(p)]
+        if len(candidates) != 1:
+            raise RuntimeError("The loaded HyprWindowShade belongs to another installation; leaving it untouched.")
+        old = candidates[0]
+    plugin = build()
+    if old == plugin:
+        print("The current Hyprfuego plugin is already loaded.")
+        return
+    if old:
+        ctl("plugin", "unload", old)
+        if loaded():
+            raise RuntimeError("The previous plugin did not unload; leaving the new build inactive.")
+    try:
+        load_plugin()
+    except Exception:
+        if old:
+            ctl("plugin", "load", old)
+        raise
+    configerrors()
+    print("Hyprfuego plugin reloaded. Close a normal application window to check the contents burn.")
+
+
+def rule(app=".*", name="hyprfuego-close", fallback=False, shader=None):
+    tag = "+shader_close_default:" if fallback else "+shader_close:"
+    return "hl.window_rule({name=" + json.dumps(name) + ",match={class=" + json.dumps(app) + "},tag=" + json.dumps(tag + str(shader or SHADER)) + "})"
+
+
+def preview(size_test=False):
+    version()
+    configerrors()
+    newly_loaded = not loaded()
+    reload_plugin()
+    process = None
+    try:
+        windows = [("Large", 760, 480), ("Small", 440, 260)] if size_test else [("Preview", 760, 480)]
+        shader = ROOT / "shaders/burn-close-size-preview.glsl" if size_test else SHADER
+        for index, (label, width, height) in enumerate(windows):
+            app = f"hyprfuego-preview-{os.getpid()}-{index}"
+            lua = "hl.window_rule({name=" + json.dumps(app + "-size") + ",match={class=" + json.dumps("^"+app+"$") + "},float=true,size={" + str(width) + "," + str(height) + "},center=true})\n"
+            ctl("eval", lua + rule("^" + app + "$", app, shader=shader))
+            configerrors()
+            print(label + " window: watch its flame size when it closes.", flush=True)
+            demo = 'printf "\\n  HYPRFUEGO: ' + label + '\\n\\n  Burning in 5 seconds...\\n\\n"; sleep 5'
+            process = subprocess.Popen(["kitty", "--config", "NONE", "--class", app,
+                "--title", "Hyprfuego " + label.lower(), "--override", "background=#20242d",
+                "--override", "foreground=#eee5cf", "bash", "-c", demo])
+            process.wait(timeout=30)
+            if process.returncode:
+                raise RuntimeError("The preview terminal failed.")
+            time.sleep(1.4)
+        if size_test:
+            print("Size test finished. Normal windows still use the original shader.")
+        else:
+            print("Preview finished. Enable for all windows with: ./hyprfuego enable")
+    finally:
+        if process and process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+            time.sleep(1.4)
+        try:
+            ctl("reload")
+            configerrors()
+        finally:
+            if newly_loaded:
+                ctl("plugin", "unload", artifact())
+
+
+def module_text():
+    # shell quoting here is for hl.exec_cmd, not Lua's string syntax.
+    import shlex
+    command = shlex.join([shutil.which("python3"), str(ROOT / "hyprfuego"), "session-load"])
+    return ("-- Managed by Hyprfuego. Source: " + str(ROOT) + "\n"
+        + rule(fallback=True) + "\n"
+        + "hl.on('hyprland.start', function()\n    hl.exec_cmd(" + json.dumps(command) + ")\nend)\n")
+
+
+def block():
+    return START + "\ndofile(" + json.dumps(str(MODULE)) + ")\n" + END
+
+
+def strip_block(text):
+    if START not in text and END not in text:
+        return text
+    if text.count(START) != 1 or text.count(END) != 1:
+        raise RuntimeError("Ambiguous Hyprfuego config markers; leaving configuration untouched.")
+    pattern = re.compile(re.escape(START) + r"\n.*?\n" + re.escape(END) + r"\n?", re.S)
+    cleaned, count = pattern.subn("", text)
+    if count != 1:
+        raise RuntimeError("Malformed Hyprfuego block; leaving configuration untouched.")
+    return cleaned
+
+
+def enable():
+    version()
+    configerrors()
+    build()
+    original = MAIN.read_text()
+    previous_module = MODULE.read_text() if MODULE.exists() else None
+    if previous_module is not None and not previous_module.startswith("-- Managed by Hyprfuego."):
+        raise RuntimeError(f"Unmanaged file exists: {MODULE}")
+    updated = strip_block(original).rstrip() + "\n\n" + block() + "\n"
+    backup = MAIN.with_name(MAIN.name + ".bak.hyprfuego-" + str(time.time_ns()))
+    shutil.copy2(MAIN, backup)
+    newly_loaded = load_plugin()
+    try:
+        write_atomic(MODULE, module_text())
+        write_atomic(MAIN, updated)
+        ctl("reload")
+        configerrors()
+    except Exception:
+        write_atomic(MAIN, original)
+        if previous_module is None:
+            MODULE.unlink(missing_ok=True)
+        else:
+            write_atomic(MODULE, previous_module)
+        try:
+            ctl("reload")
+        finally:
+            if newly_loaded:
+                ctl("plugin", "unload", artifact())
+        raise
+    print("Burn on close enabled. Duration: 1.15 seconds. Backup:", backup)
+    print("Disable with:", ROOT / "hyprfuego", "disable")
+
+
+def disable():
+    # Removal must remain usable after a compositor upgrade.
+    ctl("version")
+    original = MAIN.read_text()
+    updated = strip_block(original)
+    if updated != original:
+        backup = MAIN.with_name(MAIN.name + ".bak.hyprfuego-disable-" + str(time.time_ns()))
+        shutil.copy2(MAIN, backup)
+        write_atomic(MAIN, updated)
+        ctl("reload")
+        configerrors()
+    if (BUILD / "plugin.json").exists():
+        plugin = artifact()
+        if loaded() and owns_loaded(plugin):
+            ctl("plugin", "unload", plugin)
+    print("Hyprfuego disabled. Source, shader and backups retained.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load"])
+    parser.add_argument("--size-test", action="store_true", help="Preview constant-size flames on a large and a small window")
+    args = parser.parse_args()
+    if args.size_test and args.command != "preview":
+        parser.error("--size-test is only available with preview")
+    if args.command == "build":
+        build()
+    elif args.command == "check":
+        run("glslangValidator", "-S", "frag", SHADER, capture=False)
+        run(sys.executable, ROOT / "tools/render.py", capture=False)
+    elif args.command == "preview":
+        preview(args.size_test)
+    elif args.command == "enable":
+        enable()
+    elif args.command == "disable":
+        disable()
+    elif args.command == "reload":
+        reload_plugin()
+    elif args.command == "session-load":
+        load_plugin()
+    else:
+        print("Configured:", START in MAIN.read_text())
+        print("Plugin loaded:", loaded())
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+        print("Hyprfuego:", exc, file=sys.stderr)
+        sys.exit(1)
