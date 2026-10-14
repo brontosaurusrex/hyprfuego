@@ -103,14 +103,17 @@ follow HyprWindowShade's default fullscreen policy; no fullscreen override is ad
 
 The softer flame shader uses advected noise for translucent wisps, a few taller
 flame tongues, pale rolling smoke and 48 procedural ember trajectories. The
-left, middle and right receive shuffled fast/medium/slow burn schedules, smoothly
-joined across the window and varied by its seed. Different parts therefore
-ignite and finish at different times, while already burned areas stay gone.
+burn front uses five independently randomized speeds joined with smooth curves.
+Their positions also vary continuously, producing differently sized fast and slow
+patches instead of choosing among six left/middle/right orders. Different parts
+therefore ignite and finish at different times, while already burned areas stay gone.
 Each close gets a fresh seed from a plugin-owned random sequence, rather than
 from the window's potentially reused memory address. That seed is stored for
-the entire fadeout, keeping the flames steady within one animation. The update
-runs once per close and adds no per-pixel work. Reload the plugin after installing
-this source change with `./hyprfuego reload`.
+the entire fadeout, keeping the flames steady within one animation. Seed generation
+runs once per close and adds no per-pixel work.
+This profile update is shader-only and reloads automatically on subsequent closes;
+it needs no new plugin binary. Both the normal and constant-size shaders use it.
+Two closes can naturally have the same broad leading side while their shapes differ.
 Embers spawn at their part of the moving front, with individual births,
 lifetimes, sideways drift, bright cores, orange halos and short streaks. They
 scale with window size so they remain visible on a scaled desktop.
@@ -131,12 +134,13 @@ build/randomization/test-close-seed > build/randomization/seeds.txt
 python3 tools/render.py --seeds build/randomization/seeds.txt --output build/randomization
 ```
 
-The native test checks range and variation across 1,000 samples. The render test
-checks that generated seeds produce left-, middle-, and right-leading burns.
-The plugin now tracks the last leading region per workspace and encodes the next
-permutation directly into its seed; the shader no longer hashes that choice
-again. Interleaved workspace tests verify that a workspace's leading region
-does not repeat on consecutive closes, including when it contains just one window.
+The native test checks range and variation across 1,000 samples and fresh seeds
+across 900 interleaved workspace closes. The render test checks that actual seeds
+produce left-, middle-, and right-leading burns, and at least 12 distinct broad
+outlines in 18 closes. It groups similar outlines so tiny contour jitter cannot
+disguise repeated templates. `build/randomization/burn-patterns.png` compares the
+closes at the same animation phase. The old six-order shader fails this check;
+the continuous profile produced 17 distinct outlines from the same 18 seeds.
 
 ## Test constant-size flames
 

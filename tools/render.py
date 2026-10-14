@@ -134,7 +134,7 @@ def main():
     assert warm_pixels > 20, "Detached embers are missing throughout the animation"
 
     # Regions should burn at different rates, and the leading region should
-    # change with the per-window seed rather than always being the same side.
+    # change with the per-close seed rather than always being the same side.
     leading = []
     for sample_seed in (0.17, 0.37, 0.71):
         uniform("seed", sample_seed)
@@ -145,20 +145,28 @@ def main():
         assert max(coverage) - min(coverage) > 0.08, "Burn speed is too uniform across the window"
         leading.append(int(np.argmin(coverage)))
     assert len(set(leading)) > 1, "The same side always burns first"
-    if args.seeds:
-        counts = [0, 0, 0]
-        previous_leader = None
-        for sample_seed in map(float, args.seeds.read_text().split()):
-            uniform("seed", sample_seed)
-            sample = render(0.5)
-            coverage = [np.mean(part[:, :, 3] >= 254)
-                for part in np.array_split(sample[90:460, 130:670], 3, axis=1)]
-            leader = int(np.argmin(coverage))
-            assert leader != previous_leader, "Consecutive closes repeated their leading region"
-            previous_leader = leader
-            counts[leader] += 1
-        assert all(counts), "Per-close seeds failed to produce all three leading regions"
-        print("Actual close-seed sequence, leading left/middle/right:", counts)
+    sample_seeds = (list(map(float, args.seeds.read_text().split())) if args.seeds
+                    else list(np.linspace(0.031, 0.971, 18)))
+    counts = [0, 0, 0]
+    profiles = []
+    pattern_samples = []
+    for sample_seed in sample_seeds:
+        uniform("seed", sample_seed)
+        sample = render(0.5)
+        paper = sample[90:460, 130:670, 3] >= 254
+        coverage = [np.mean(part) for part in np.array_split(paper, 3, axis=1)]
+        counts[int(np.argmin(coverage))] += 1
+        # Measure the broad outline rather than fine flame/particle noise.
+        # Group near-identical outlines so small contour jitter cannot turn
+        # six broad templates into an apparent success.
+        profile = np.array([np.mean(part) for part in np.array_split(paper, 17, axis=1)])
+        if all(np.sqrt(np.mean((profile - other) ** 2)) > 0.06 for other in profiles):
+            profiles.append(profile)
+        pattern_samples.append((sample_seed, sample))
+    assert all(counts), "Per-close seeds failed to produce all three leading regions"
+    assert len(profiles) >= min(len(sample_seeds), 12), "Broad burn shapes still repeat too few templates"
+    print("Sampled leading left/middle/right:", counts)
+    print("Distinct broad burn outlines:", len(profiles), "of", len(sample_seeds))
     uniform("seed", 0.37)
 
     checker = Image.new("RGB", (W, H), (42, 46, 52))
@@ -179,6 +187,21 @@ def main():
         previews.append(composed.convert("RGB"))
     out = args.output
     out.mkdir(parents=True, exist_ok=True)
+    # Compare different closes at the same phase, including the actual native
+    # seed sequence when --seeds is supplied.
+    pattern_sheet = Image.new("RGB", (W * 3 // 2, (H // 2 + 28) * 6), (20, 23, 29))
+    pd = ImageDraw.Draw(pattern_sheet)
+    for i, (sample_seed, frame) in enumerate(pattern_samples[:18]):
+        straight = frame.copy()
+        alpha = frame[:, :, 3:4].astype(np.float32)
+        straight[:, :, :3] = np.clip(frame[:, :, :3].astype(np.float32)
+            * 255.0 / np.maximum(alpha, 1.0), 0, 255).astype(np.uint8)
+        composed = checker.copy().convert("RGBA")
+        composed.alpha_composite(Image.fromarray(straight))
+        x, y = (i % 3) * (W // 2), (i // 3) * (H // 2 + 28)
+        pattern_sheet.paste(composed.convert("RGB").resize((W // 2, H // 2)), (x, y + 28))
+        pd.text((x + 12, y + 6), f"close {i + 1}: seed {sample_seed:.5f}", fill="white")
+    pattern_sheet.save(out / "burn-patterns.png")
     if args.save_frames:
         np.savez_compressed(out / "frames.npz", frames=np.stack(frames))
     if args.benchmark:

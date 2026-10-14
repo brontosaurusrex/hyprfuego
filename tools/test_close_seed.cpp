@@ -20,20 +20,15 @@ int main() {
     assert(samples.size() > 990);
     std::cerr << "PASS: 1000 close seeds in range; " << samples.size()
               << " distinct values, independent of window address.\n";
-    static constexpr int leading[] = {0, 2, 1, 2, 1, 0};
-    std::map<int, int> previous;
-    std::set<int> leaders;
-    // Interleave workspaces: each workspace retains its own previous leader.
+    std::map<int, float> previous;
+    // Interleave workspaces, including repeated single-window closes. The
+    // shader uses the full seed for continuous profiles, not its old order bin.
     for (int i = 0; i < 900; ++i) {
         const int workspace = i % 3;
         const float seed = seeds.next(workspace);
-        const int order = static_cast<int>(std::floor(seed * 6.0f));
-        assert(order >= 0 && order < 6);
-        const int leader = leading[order];
-        if (previous.count(workspace)) assert(previous[workspace] != leader);
-        previous[workspace] = leader;
-        leaders.insert(leader);
+        assert(std::isfinite(seed) && seed >= 0.0f && seed < 1.0f);
+        if (previous.count(workspace)) assert(previous[workspace] != seed);
+        previous[workspace] = seed;
     }
-    assert(leaders.size() == 3);
-    std::cerr << "PASS: 900 interleaved closes never repeat the leader in a workspace.\n";
+    std::cerr << "PASS: 900 interleaved workspace closes receive fresh seeds.\n";
 }

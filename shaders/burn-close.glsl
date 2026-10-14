@@ -31,20 +31,28 @@ vec4 over(vec4 foreground, vec4 background) {
 // Broad, smoothly joined patches ignite and finish at different times. The
 // field stays fixed during one close, so consumed areas cannot grow back.
 vec2 burnSchedule(float x, float variant) {
-    // Shuffle fast/medium/slow regions so every close has a clear leader,
-    // including seeds for which unconstrained noise happens to be almost flat.
-    // The plugin encodes the permutation directly and avoids repeating the
-    // leading region within a workspace. Hashing again would lose that guarantee.
-    int order = int(clamp(floor(seed * 6.0), 0.0, 5.0));
-    vec3 regions = vec3(0.0, 0.5, 1.0);
-    if (order >= 3) regions = regions.zyx;
-    if (order % 3 == 1) regions = regions.yzx;
-    else if (order % 3 == 2) regions = regions.zxy;
-    float across = clamp(x * 3.0 - 0.5, 0.0, 2.0);
-    float timing = across < 1.0
-        ? mix(regions.x, regions.y, smoothstep(0.0, 1.0, across))
-        : mix(regions.y, regions.z, smoothstep(0.0, 1.0, across - 1.0));
-    timing = clamp(timing + (noise(vec2(x * 9.0, variant + 7.31)) - 0.5) * 0.1, 0.0, 1.0);
+    // Five independently varied speeds, with continuously varying patch widths.
+    // All controls depend only on this close's seed, never animation time.
+    float a = hash21(vec2(variant, 1.23));
+    float b = hash21(vec2(variant, 8.91));
+    float c = hash21(vec2(variant, 15.77));
+    float d = hash21(vec2(variant, 24.13));
+    float e = hash21(vec2(variant, 37.41));
+    float low = min(min(a, b), min(min(c, d), e));
+    float high = max(max(a, b), max(max(c, d), e));
+    // Normalize the range so even similar random controls yield visible variation.
+    // The ordered knot positions can move without crossing one another.
+    vec3 knots = vec3(0.15 + 0.20 * d, 0.40 + 0.20 * a, 0.65 + 0.20 * b);
+    float timing;
+    if (x < knots.x)
+        timing = mix(a, b, smoothstep(0.0, knots.x, x));
+    else if (x < knots.y)
+        timing = mix(b, c, smoothstep(knots.x, knots.y, x));
+    else if (x < knots.z)
+        timing = mix(c, d, smoothstep(knots.y, knots.z, x));
+    else
+        timing = mix(d, e, smoothstep(knots.z, 1.0, x));
+    timing = clamp((timing - low) / max(high - low, 0.0001), 0.0, 1.0);
     return vec2(mix(0.005, 0.14, timing), mix(0.61, 0.98, timing));
 }
 float burnFront(float x, float p, float variant) {
