@@ -1,0 +1,21 @@
+{
+  "renderer": "Mesa Intel(R) HD Graphics 520 (SKL GT2)",
+  "resolution": [
+    800,
+    550
+  ],
+  "reference_seed": 0.37,
+  "default_duration_seconds": 1.15,
+  "validated_closes": 128,
+  "sources": {
+    "shaders/burn-close.glsl": "f8c207a6e0071efc6933958d099ae7a6621ebe3d4f1303c7393a54540dd0df66",
+    "tools/render.py": "8f5ef45f8c73901f8574533f113ef30b561c933767fac20cb86a02687c1525c8",
+    "vendor/HyprWindowShade/BurnProfile.hpp": "02bcd046e8416cfe26480aa4dfbf7a098c0730cfdcc227e358d0a4b02e11ddff",
+    "vendor/HyprWindowShade/CloseSeed.hpp": "b87aebdca4de7b3e1992ffea22e6c0b359fc643dfc17d5b480d332f128eb523a"
+  },
+  "assets": {
+    "burn-preview.gif": "8495784a7953477838f238112176acd7f57719344d2ce624e86a2d602f1358f7",
+    "burn-contact-sheet.png": "dd2489d0d241f255d27db719146395297b967ec4a3d6cfd66bd674da03409054",
+    "burn-patterns.png": "5d8fee7001980336c97f55af2469579eb9e632591ebce40ccc1f5d35979da845"
+  }
+}

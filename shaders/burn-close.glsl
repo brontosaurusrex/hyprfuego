@@ -22,7 +22,8 @@ float noise(vec2 p) {
                mix(hash21(i + vec2(0, 1)), hash21(i + vec2(1)), f.x), f.y);
 }
 float fbm(vec2 p) {
-    return 0.68 * noise(p) + 0.32 * noise(p * 2.03 + 17.1);
+    return 0.57 * noise(p) + 0.28 * noise(p * 2.03 + 17.1)
+         + 0.15 * noise(p * 4.11 - 9.7);
 }
 vec4 over(vec4 foreground, vec4 background) {
     return foreground + background * (1.0 - foreground.a);
@@ -132,7 +133,7 @@ void main() {
     // before evaluating their front/trajectory; inactive sparks cost no geometry.
     vec4 sparks = vec4(0);
     float aspect = pixels.x / pixels.y;
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 48; ++i) {
         float id = float(i);
         float a = hash21(vec2(id + variant, 4.13));
         float birth = 0.06 + a * 0.74;

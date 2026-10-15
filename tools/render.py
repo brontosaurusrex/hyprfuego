@@ -95,8 +95,8 @@ def main():
     draw.rounded_rectangle(box, radius=16, fill=(24, 29, 38, 255))
     draw.text((150, 105), "HYPRFUEGO   /   burn on close", fill=(240, 230, 200, 255), font_size=22)
     draw.line((145, 148, 655, 148), fill=(62, 70, 83, 255), width=2)
-    for y, text in enumerate(["$ ./hyprfuego preview", "", "Bottom-up burn / translucent smoke.",
-        "Original timing / fresh per-close curves.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"]):
+    for y, text in enumerate(["$ ./hyprfuego preview", "", "48 sparks / turbulent flames / rising smoke.",
+        "A fresh bottom-up burn for each close.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"]):
         draw.text((150, 177 + y * 30), text, fill=(190, 215, 190, 255), font_size=17)
     data = np.asarray(source)
     GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, W, H, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, data)
