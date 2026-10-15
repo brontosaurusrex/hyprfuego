@@ -23,43 +23,44 @@ float noise(vec2 p) {
                mix(hash21(i + vec2(0, 1)), hash21(i + vec2(1)), f.x), f.y);
 }
 float fbm(vec2 p) {
-    return 0.57 * noise(p) + 0.28 * noise(p * 2.03 + 17.1)
-         + 0.15 * noise(p * 4.11 - 9.7);
+    return 0.68 * noise(p) + 0.32 * noise(p * 2.03 + 17.1);
 }
 vec4 over(vec4 foreground, vec4 background) {
     return foreground + background * (1.0 - foreground.a);
 }
-// Broad, smoothly joined patches ignite and finish at different times. The
-// field stays fixed during one close, so consumed areas cannot grow back.
-vec2 burnSchedule(float x, float variant) {
-    // Five independently varied speeds, with continuously varying patch widths.
-    // All controls depend only on this close's seed, never animation time.
-    float a = hash21(vec2(variant, 1.23));
-    float b = hash21(vec2(variant, 8.91));
-    float c = hash21(vec2(variant, 15.77));
-    float d = hash21(vec2(variant, 24.13));
-    float e = hash21(vec2(variant, 37.41));
+// The original bottom-up profile, with a fresh curve for each close.
+// Keep this profile in sync with vendor/HyprWindowShade/BurnProfile.hpp.
+highp uint profileHash(highp uint value) {
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16u);
+}
+float profileControl(highp uint key, highp uint channel) {
+    return float(profileHash(key ^ (channel * 0x9e3779b9u)) >> 8u) / 16777216.0;
+}
+float burnClock(float p) { return clamp(p, 0.0, 1.0); }
+vec2 burnSchedule(float x, highp uint key) {
+    // The original five-control curve profile; no independently surging knots.
+    float a = profileControl(key, 10u), b = profileControl(key, 11u);
+    float c = profileControl(key, 12u), d = profileControl(key, 13u);
+    float e = profileControl(key, 14u);
     float low = min(min(a, b), min(min(c, d), e));
     float high = max(max(a, b), max(max(c, d), e));
-    // Normalize the range so even similar random controls yield visible variation.
-    // The ordered knot positions can move without crossing one another.
     vec3 knots = vec3(0.15 + 0.20 * d, 0.40 + 0.20 * a, 0.65 + 0.20 * b);
     float timing;
-    if (x < knots.x)
-        timing = mix(a, b, smoothstep(0.0, knots.x, x));
-    else if (x < knots.y)
-        timing = mix(b, c, smoothstep(knots.x, knots.y, x));
-    else if (x < knots.z)
-        timing = mix(c, d, smoothstep(knots.y, knots.z, x));
-    else
-        timing = mix(d, e, smoothstep(knots.z, 1.0, x));
+    if (x < knots.x) timing = mix(a, b, smoothstep(0.0, knots.x, x));
+    else if (x < knots.y) timing = mix(b, c, smoothstep(knots.x, knots.y, x));
+    else if (x < knots.z) timing = mix(c, d, smoothstep(knots.y, knots.z, x));
+    else timing = mix(d, e, smoothstep(knots.z, 1.0, x));
     timing = clamp((timing - low) / max(high - low, 0.0001), 0.0, 1.0);
     return vec2(mix(0.005, 0.14, timing), mix(0.61, 0.98, timing));
 }
-float burnFront(float x, float p, float variant) {
-    vec2 schedule = burnSchedule(x, variant);
-    float localProgress = clamp((p - schedule.x) / (schedule.y - schedule.x), 0.0, 1.0);
-    return mix(-0.18, 1.18, localProgress);
+float burnFront(float x, float p, highp uint key) {
+    vec2 schedule = burnSchedule(x, key);
+    float local = clamp((burnClock(p) - schedule.x) / (schedule.y - schedule.x), 0.0, 1.0);
+    return mix(-0.18, 1.18, local);
 }
 void main() {
     vec4 src = texture(tex, v_texcoord);
@@ -74,11 +75,12 @@ void main() {
     float effectScale = 600.0 / pixels.y;
     vec2 physical = pos / effectScale;
     float variant = seed * 23.71;
+    highp uint profileKey = uint(seed * 16777216.0);
     float t = p * 3.8;
-    float front = burnFront(uv.x, p, variant);
+    float front = burnFront(uv.x, p, profileKey);
     // A stationary irregular contour burns monotonically; the gas moves freely.
     float contour = fbm(vec2(physical.x * 14.0 + variant, physical.y * 9.0));
-    float edge = pos.y - front + (contour - 0.5) * 0.095 * effectScale;
+    float edge = (pos.y - front) + (contour - 0.5) * 0.055 * effectScale;
     float remain = smoothstep(-0.004, 0.007, edge);
     float alive = smoothstep(0.0, 0.065, p) * (1.0 - smoothstep(0.84, 1.0, p));
 
@@ -89,8 +91,8 @@ void main() {
 
     // A few taller tongues, like burning paper, rather than a uniform comb.
     float plume = pow(noise(vec2(physical.x * 4.0, variant + 41.5)), 3.0);
-    float height = (0.045 + 0.12 * fbm(vec2(physical.x * 12.0 + variant, -t * 1.15))
-                 + 0.55 * plume) * effectScale;
+    float height = (0.045 + 0.09 * fbm(vec2(physical.x * 12.0 + variant, -t * 1.15))
+                 + 0.30 * plume) * effectScale;
     float h = max(edge, 0.0) / height;
     float flameAlpha = 0.0;
     vec3 fireColor = vec3(0);
@@ -112,42 +114,43 @@ void main() {
         fireColor = mix(fireColor, vec3(1.0, 0.87, 0.52), pow(heat, 3.8) * 0.85);
     }
 
-    // Rolling smoke is separate from the disappearing paper. It is visible in
-    // the burned-away region too, and thins out toward the end of the animation.
-    float smokeBand = smoothstep(-0.35, -0.06, edge / effectScale)
-                    * (1.0 - smoothstep(0.12, 0.48, edge / effectScale));
+    // Smoke originates below its current position and drifts upward. A soft
+    // emission envelope and broken density avoid a gray strip glued to the edge.
     float smokeAlpha = 0.0;
-    vec3 smokeColor = vec3(0);
-    if (smokeBand > 0.0) {
-        float curl = fbm(vec2(physical.x * 6.0 + variant, physical.y * 6.0 - t * 0.95));
-        float soot = fbm(vec2(physical.x * 11.0 + (curl - 0.5) * 3.5 + variant,
-                             physical.y * 9.0 - t * 1.35));
-        smokeAlpha = smoothstep(0.3, 0.73, soot) * smokeBand * alive * 0.32 * src.a;
-        smokeColor = mix(vec3(0.18, 0.19, 0.20), vec3(0.56, 0.59, 0.62), curl);
+    vec3 smokeColor = vec3(0.46, 0.45, 0.43);
+    if (edge > -0.65 * effectScale && edge < 0.65 * effectScale) {
+        float curl = noise(vec2(physical.x * 5.0 + variant, physical.y * 4.0 - t * 0.65));
+        vec2 emissionUV = uv + vec2((curl - 0.5) * 0.065 / (pixels.x / pixels.y), 0.13) * effectScale;
+        float smokeEdge = 1.0 - emissionUV.y - burnFront(emissionUV.x, max(p - 0.12, 0.0), profileKey);
+        float density = fbm(vec2(physical.x * 16.0 + (curl - 0.5) * 3.0 + variant,
+                                   physical.y * 7.0 - t * 1.8));
+        float envelope = exp(-abs(smokeEdge/ effectScale) * 8.0);
+        float trail = smoothstep(-0.65, -0.30, edge / effectScale)
+                    * (1.0 - smoothstep(0.35, 0.65, edge / effectScale));
+        smokeAlpha = smoothstep(0.30, 0.75, density) * trail * envelope * alive * 0.34 * src.a;
+        smokeColor = mix(vec3(0.38, 0.37, 0.35), vec3(0.68, 0.67, 0.64), curl);
     }
 
-    // Each ember has a fixed birth point, lifetime and upward trajectory. These
-    // move through space rather than flickering in place on a noise grid.
+    // Sparse sparks are born on the current burn front. Check lifetime
+    // before evaluating their front/trajectory; inactive sparks cost no geometry.
     vec4 sparks = vec4(0);
     float aspect = pixels.x / pixels.y;
-    for (int i = 0; i < 48; ++i) {
+    for (int i = 0; i < 32; ++i) {
         float id = float(i);
         float a = hash21(vec2(id + variant, 4.13));
+        float birth = 0.06 + a * 0.74;
+        float age = p - birth;
+        if (age <= 0.0 || age >= 0.34) continue;
         float b = hash21(vec2(id + variant, 8.91));
         float c = hash21(vec2(id + variant, 15.77));
-        vec2 schedule = burnSchedule(b, variant);
-        float birthPhase = 0.16 + a * 0.62;
-        float birth = mix(schedule.x, schedule.y, birthPhase);
-        float age = p - birth;
-        float life = 0.21 + c * 0.23;
-        if (age <= 0.0 || age >= life) continue;
+        float life = 0.18 + c * 0.16;
+        if (age >= life) continue;
         float age01 = age / life;
+        vec2 origin = vec2(b, burnFront(b, birth, profileKey));
         float drift = (c - 0.5) * 0.6;
-        float x = b * aspect + (age * drift + sin(age * 16.0 + a * 17.0) * age * 0.13) * effectScale;
+        float x = origin.x * aspect + (age * drift + sin(age * 16.0 + a * 17.0) * age * 0.13) * effectScale;
         float rise = 1.0 + a * 1.2;
-        // Birth phase already is the local progress; no need to evaluate the
-        // same schedule/noise a second time to recover that value.
-        float y = mix(-0.18, 1.18, birthPhase) + (age * rise - age * age * 0.7) * effectScale;
+        float y = origin.y + (age * rise - age * age * 0.7) * effectScale;
         vec2 d = pos - vec2(x, y);
         d.x -= d.y * drift / rise;
         // Scale with the window instead of subpixel device-sized dots. Each

@@ -1,4 +1,5 @@
 #pragma once
+#include "CloseDurations.hpp"
 
 // 1. ABSOLUTE FIRST: Include native GLES3.
 #include <GLES3/gl32.h>
@@ -69,6 +70,7 @@ using Render::GL::CHyprOpenGLImpl;
 
 // --- SHARED GLOBALS ---
 extern HANDLE PHANDLE;
+extern CloseDurations g_closeDurations;
 extern std::vector<CHyprSignalListener> g_Listeners;
 
 // --- ISOLATED MEMORY MAPS ---
@@ -671,6 +673,7 @@ void restoreAllRetimedMoves();
 float animSeedFor(const void* p);
 
 // Hyprfuego: preserve content across explicit null-buffer unmaps.
+bool isMainAppWindow(PHLWINDOW window);
 bool initEarlySnapshotHook();
 void cleanupEarlySnapshotHook();
 SP<Render::IFramebuffer> takeEarlySnapshot(Desktop::View::CWindow* window);

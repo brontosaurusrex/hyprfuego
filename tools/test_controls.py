@@ -23,7 +23,9 @@ class Controls(unittest.TestCase):
         self.original = '-- Personal config\nrequire("hypr.mine")\n'
         self.main.write_text(self.original)
         patches = [patch.object(app, "MAIN", self.main), patch.object(app, "MODULE", self.module),
+            patch.object(app, "SETTINGS", self.root / "settings/config.json"),
             patch.object(app, "BUILD", self.root / "build"), patch.object(app, "version"),
+            patch.object(app, "apply_duration"),
             patch.object(app, "configerrors"), patch.object(app, "build"),
             patch.object(app, "load_plugin", return_value=True),
             patch.object(app, "artifact", return_value=self.root / "test.so"),
@@ -152,6 +154,91 @@ class Controls(unittest.TestCase):
         self.assertEqual(self.main.read_text(), self.original)
         self.assertFalse(self.module.exists())
         self.assertFalse(any(c.args[:2] == ("plugin", "unload") for c in app.ctl.call_args_list))
+
+    def test_duration_applies_and_preserves_personal_edits(self):
+        app.enable()
+        original_main = self.main.read_text()
+        self.module.write_text(self.module.read_text() + "-- personal module note\n")
+        app.configure_duration("1.8")
+        self.assertEqual(app.duration_seconds(), 1.8)
+        self.assertIn("burn-close.glsl", self.module.read_text())
+        self.assertNotIn("@1.8", self.module.read_text())
+        app.apply_duration.assert_called_once()
+        self.assertIn("-- personal module note", self.module.read_text())
+        self.assertEqual(self.main.read_text(), original_main)
+        self.assertNotIn("@", app.rule(shader=app.ROOT / "shaders/burn-close-size-preview.glsl"))
+        app.ctl.assert_any_call("reload")
+
+    def test_duration_failure_restores_settings_and_module(self):
+        app.enable()
+        app.configure_duration("1.6")
+        previous_settings = app.SETTINGS.read_text()
+        previous_module = self.module.read_text()
+        app.configerrors.side_effect = [None, RuntimeError("bad config")]
+        with self.assertRaisesRegex(RuntimeError, "bad config"):
+            app.configure_duration("2.5")
+        self.assertEqual(app.SETTINGS.read_text(), previous_settings)
+        self.assertEqual(self.module.read_text(), previous_module)
+
+    def test_duration_without_enable_is_saved_without_desktop_access(self):
+        app.configure_duration("2")
+        self.assertEqual(app.duration_seconds(), 2)
+        app.ctl.assert_not_called()
+        self.assertFalse(self.module.exists())
+        app.configure_duration("default")
+        self.assertEqual(app.duration_seconds(), 1.15)
+        self.assertNotIn("@", app.rule())
+
+    def test_invalid_duration_does_not_touch_files_or_desktop(self):
+        for value in ("nan", "inf", "0", "-1", "5.1", "bad", True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                app.configure_duration(value)
+        self.assertFalse(app.SETTINGS.exists())
+        self.assertEqual(self.main.read_text(), self.original)
+        app.ctl.assert_not_called()
+
+    def test_duration_does_not_overwrite_unrecognized_rule(self):
+        app.enable()
+        self.module.write_text("-- Managed by Hyprfuego.\n-- custom module\n")
+        with self.assertRaisesRegex(RuntimeError, "Managed close rule not found"):
+            app.configure_duration("2")
+        self.assertFalse(app.SETTINGS.exists())
+
+    def test_changing_duration_does_not_accumulate_window_tags(self):
+        app.enable()
+        original_rule = app.rule()
+        app.configure_duration("5")
+        self.assertEqual(app.rule(), original_rule)
+        app.configure_duration("1")
+        self.assertEqual(app.rule(), original_rule)
+        self.assertEqual(app.duration_seconds(), 1)
+        self.assertEqual(app.apply_duration.call_count, 2)
+
+    def test_runtime_update_failure_restores_previous_duration(self):
+        app.enable()
+        app.configure_duration("5")
+        applied = []
+        def update():
+            applied.append(app.duration_seconds())
+            if len(applied) == 1:
+                raise RuntimeError("runtime update failed")
+        app.apply_duration.side_effect = update
+        with self.assertRaisesRegex(RuntimeError, "runtime update failed"):
+            app.configure_duration("1")
+        self.assertEqual(applied, [1, 5])
+        self.assertEqual(app.duration_seconds(), 5)
+
+
+class RuntimeTiming(unittest.TestCase):
+    def test_saved_duration_is_sent_to_both_shader_paths(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(app, "SETTINGS", Path(tmp) / "config.json"), patch.object(app, "ctl") as ctl:
+            for seconds in (5, 1):
+                app.SETTINGS.write_text('{"duration": ' + str(seconds) + '}')
+                app.apply_duration()
+                script = ctl.call_args.args[1]
+                self.assertIn(f', {seconds})', script)
+                self.assertIn(str(app.SHADER), script)
+                self.assertIn("burn-close-size-preview.glsl", script)
 
 
 if __name__ == "__main__":

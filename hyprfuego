@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,85 @@ COMMIT = "efb50993780079460b0cbed1363e2166a2de1d9f"
 MAIN = Path.home() / ".config/hypr/hyprland.lua"
 MODULE = Path.home() / ".config/hypr/hyprfuego.lua"
 START, END = "-- BEGIN hyprfuego", "-- END hyprfuego"
+SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "hyprfuego/config.json"
+
+
+def validate_duration(value):
+    if isinstance(value, bool):
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.") from exc
+    if not math.isfinite(seconds) or not 0.1 <= seconds <= 5.0:
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.")
+    return seconds
+
+
+def settings():
+    value = json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {SETTINGS}")
+    if "duration" in value:
+        validate_duration(value["duration"])
+    return value
+
+
+def duration_seconds():
+    configured = settings().get("duration")
+    if configured is not None:
+        return validate_duration(configured)
+    match = re.search(r"(?m)^// @duration\s+([0-9.]+)", SHADER.read_text())
+    return validate_duration(match[1] if match else 1.15)
+
+
+def apply_duration():
+    seconds = duration_seconds()
+    script = ["assert(hl.plugin.HyprWindowShade.closeduration, 'Run ./hyprfuego reload to update the duration API')"]
+    for shader in (SHADER, ROOT / "shaders/burn-close-size-preview.glsl"):
+        script.append("assert(math.abs(hl.plugin.HyprWindowShade.closeduration("
+            + json.dumps(str(shader)) + f", {seconds:.9g}) - {seconds:.9g}) < 0.00001)")
+    ctl("eval", "\n".join(script))
+
+
+def configure_duration(value=None):
+    if value is None:
+        print(f"Duration: {duration_seconds():g} seconds")
+        return
+    updated = settings()
+    if value == "default":
+        updated.pop("duration", None)
+    else:
+        updated["duration"] = validate_duration(value)
+    active = MAIN.exists() and START in MAIN.read_text()
+    previous_settings = SETTINGS.read_text() if SETTINGS.exists() else None
+    previous_module = MODULE.read_text() if active and MODULE.exists() else None
+    pattern = re.compile(r'^hl\.window_rule\(\{name="hyprfuego-close",.*\}\)$', re.M)
+    if active:
+        version()
+        configerrors()
+        if previous_module is None or not previous_module.startswith("-- Managed by Hyprfuego.") or len(pattern.findall(previous_module)) != 1:
+            raise RuntimeError("Managed close rule not found; leaving configuration untouched.")
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        write_atomic(SETTINGS, json.dumps(updated, indent=2) + "\n")
+        if active:
+            # Replace only our rule, preserving other module lines and main config.
+            write_atomic(MODULE, pattern.sub(lambda _: rule(fallback=True), previous_module, count=1))
+            ctl("reload")
+            apply_duration()
+            configerrors()
+    except Exception:
+        if previous_settings is None:
+            SETTINGS.unlink(missing_ok=True)
+        else:
+            write_atomic(SETTINGS, previous_settings)
+        if active:
+            write_atomic(MODULE, previous_module)
+            ctl("reload")
+            apply_duration()
+        raise
+    print(f"Duration: {duration_seconds():g} seconds" + (" (applied)" if active else " (saved)"))
 
 
 def run(*args, capture=True):
@@ -134,10 +214,12 @@ def load_plugin():
     if loaded():
         if not owns_loaded(plugin):
             raise RuntimeError("Another HyprWindowShade build is already loaded; leaving it untouched.")
+        apply_duration()
         return False
     print(ctl("plugin", "load", plugin))
     if not loaded():
         raise RuntimeError("HyprWindowShade did not register after loading.")
+    apply_duration()
     return True
 
 
@@ -152,6 +234,7 @@ def reload_plugin():
         old = candidates[0]
     plugin = build()
     if old == plugin:
+        apply_duration()
         print("The current Hyprfuego plugin is already loaded.")
         return
     if old:
@@ -170,7 +253,8 @@ def reload_plugin():
 
 def rule(app=".*", name="hyprfuego-close", fallback=False, shader=None):
     tag = "+shader_close_default:" if fallback else "+shader_close:"
-    return "hl.window_rule({name=" + json.dumps(name) + ",match={class=" + json.dumps(app) + "},tag=" + json.dumps(tag + str(shader or SHADER)) + "})"
+    path = str(shader or SHADER)
+    return "hl.window_rule({name=" + json.dumps(name) + ",match={class=" + json.dumps(app) + "},tag=" + json.dumps(tag + path) + "})"
 
 
 def preview(size_test=False):
@@ -195,7 +279,7 @@ def preview(size_test=False):
             process.wait(timeout=30)
             if process.returncode:
                 raise RuntimeError("The preview terminal failed.")
-            time.sleep(1.4)
+            time.sleep(duration_seconds() + 0.25)
         if size_test:
             print("Size test finished. Normal windows still use the original shader.")
         else:
@@ -204,7 +288,7 @@ def preview(size_test=False):
         if process and process.poll() is None:
             process.terminate()
             process.wait(timeout=5)
-            time.sleep(1.4)
+            time.sleep(duration_seconds() + 0.25)
         try:
             ctl("reload")
             configerrors()
@@ -267,7 +351,7 @@ def enable():
             if newly_loaded:
                 ctl("plugin", "unload", artifact())
         raise
-    print("Burn on close enabled. Duration: 1.15 seconds. Backup:", backup)
+    print(f"Burn on close enabled. Duration: {duration_seconds():g} seconds. Backup:", backup)
     print("Disable with:", ROOT / "hyprfuego", "disable")
 
 
@@ -291,12 +375,17 @@ def disable():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load"])
+    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load", "duration"])
+    parser.add_argument("seconds", nargs="?", help="With duration: seconds (0.1–5), or default")
     parser.add_argument("--size-test", action="store_true", help="Preview constant-size flames on a large and a small window")
     args = parser.parse_args()
     if args.size_test and args.command != "preview":
         parser.error("--size-test is only available with preview")
-    if args.command == "build":
+    if args.seconds is not None and args.command != "duration":
+        parser.error("A duration value is only available with the duration command")
+    if args.command == "duration":
+        configure_duration(args.seconds)
+    elif args.command == "build":
         build()
     elif args.command == "check":
         run("glslangValidator", "-S", "frag", SHADER, capture=False)
@@ -314,6 +403,7 @@ def main():
     else:
         print("Configured:", START in MAIN.read_text())
         print("Plugin loaded:", loaded())
+        print(f"Duration: {duration_seconds():g} seconds")
 
 
 if __name__ == "__main__":

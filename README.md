@@ -2,7 +2,7 @@
 
 A Compiz-inspired burn animation for closing Hyprland windows: soft, turbulent
 flames, a charred edge, drifting embers and translucent smoke. Open and move animations
-keep your existing settings. The shader runs for 1.15 seconds only during close.
+keep your existing settings. The shader defaults to 1.15 seconds and runs only during close.
 
 Uses the exact HyprWindowShade revision that passed the live test on this machine.
 Its C++ source is included in `vendor/HyprWindowShade`, with upstream's
@@ -81,7 +81,7 @@ the actual GLSL shader in a surfaceless Mesa EGL context and saves
 `build/burn-preview.gif` and `build/burn-contact-sheet.png`. It verifies exact
 first/last frames, transparent margins, premultiplied alpha, decreasing opaque
 area, bottom-to-top burning of an off-centre window inside a monitor snapshot,
-translucent smoke residue and detached warm embers.
+visible translucent smoke residue and warm sparks.
 These checks use software rendering and do not replace a live desktop preview.
 The control tests exercise repeated enable, rollback and preserving personal config.
 
@@ -94,53 +94,88 @@ plugin until the integration is updated. Disable remains available after updates
 Keep this source directory in place while enabled: configuration and startup
 loading refer to its paths.
 
-Edit `shaders/burn-close.glsl` to change the palette or flame geometry. Its
-`// @duration 1.15` sets the duration. The plugin reloads shader edits automatically;
-no rebuild is needed. Source pixels above the burn front remain unchanged except
-for the narrow charred edge. Transparent source areas stay transparent, which
-confines the flames to the window snapshot's existing alpha. Fullscreen windows
-follow HyprWindowShade's default fullscreen policy; no fullscreen override is added.
+Set the close duration in seconds:
 
-The softer flame shader uses advected noise for translucent wisps, a few taller
-flame tongues, pale rolling smoke and 48 procedural ember trajectories. The
-burn front uses five independently randomized speeds joined with smooth curves.
-Their positions also vary continuously, producing differently sized fast and slow
-patches instead of choosing among six left/middle/right orders. Different parts
-therefore ignite and finish at different times, while already burned areas stay gone.
-Each close gets a fresh seed from a plugin-owned random sequence, rather than
-from the window's potentially reused memory address. That seed is stored for
-the entire fadeout, keeping the flames steady within one animation. Seed generation
-runs once per close and adds no per-pixel work.
-This profile update is shader-only and reloads automatically on subsequent closes;
-it needs no new plugin binary. Both the normal and constant-size shaders use it.
-Two closes can naturally have the same broad leading side while their shapes differ.
-Embers spawn at their part of the moving front, with individual births,
-lifetimes, sideways drift, bright cores, orange halos and short streaks. They
-scale with window size so they remain visible on a scaled desktop.
-Smoke and sparks can remain in the burned region until the effect ends. They
-stay inside the snapshot's original alpha, so they do not draw over unrelated
-areas of the desktop. These are procedural shader particles, not a separate
-particle simulator. The original stylized shader is preserved as
-`shaders/burn-close-classic.glsl`, and the first softer, even-speed version as
-`shaders/burn-close-smoky.glsl`. `Pasted image.png` is the user's burning-paper
-reference for the localized tall flames, hot char edge and pale smoke.
+```bash
+./hyprfuego duration          # show the current duration
+./hyprfuego duration 1.8      # slower: 1.8 seconds
+./hyprfuego duration 0.8      # faster: 0.8 seconds
+./hyprfuego duration default  # restore the shader default (1.15 seconds)
+```
+
+Values from 0.1 to 5 seconds are supported. The preference is saved in
+`~/.config/hyprfuego/config.json` (or `$XDG_CONFIG_HOME/hyprfuego/config.json`).
+When enabled, the command applies it immediately with a config reload and checks
+for errors; a failed apply restores the previous setting, runtime value and managed rule.
+It also controls previews and persists across logins and enable/disable cycles.
+The duration changes playback time, retaining the original linear progress curve.
+The setting applies to all closes started after the command, including windows
+that were already open. A close already in progress keeps its original duration.
+Window tags stay stable; the plugin resolves the current duration at close creation,
+so legacy `@5` tags cannot override a newer one-second setting.
+The native regression test is `tools/test_close_duration.cpp`. A live terminal
+check reproduced a retained `@5` tag on an existing window, changed the setting
+to one second, and verified that both it and a newly opened terminal had finished
+before 1.4 seconds. The screenshots and counts are in `build/timing-fix/live/`.
+
+The effect applies to ordinary main application windows. Child/transient windows,
+modal dialogs and X11 override-redirect windows keep
+the normal close behavior. This uses the relationships and roles reported by the
+application; an auxiliary window reported as an independent ordinary toplevel
+cannot be identified reliably from process ID alone. A Wayland dialog object by
+itself does not disqualify a main window: GTK may create one without assigning a
+parent. Independent main windows
+from the same app are each eligible. The filter is applied before snapshot
+capture and again before burn/reflow timing is attached.
+A live GTK/Nautilus check verifies a visible burn on Files and a plain GTK main
+window, with no fire on a transient/modal dialog. Screenshots and pixel counts
+are under `build/files-filter-check/`.
+
+The burn rises from the bottom with the original five smoothly joined speed
+controls and variable patch widths. Left/right sweeps, central holes and the
+later independently accelerating patches are not used. A fresh seed is selected
+once per close; the plugin compares the broad motion against the previous eight
+closes on that workspace. It tries at most 64 candidates, choosing the most
+different candidate if none clears the distance threshold. Similar patterns can
+still occur over time. CPU/GPU profile agreement is checked by rendering the
+controls directly. Both normal and constant-size preview shaders use this profile.
+Changes to the native seed selection or main-window filter require
+`./hyprfuego reload`; shader edits reload automatically.
+
+Edit `shaders/burn-close.glsl` to change the palette or flame geometry. Its
+`// @duration 1.15` is the default used when there is no duration preference.
+Untouched source areas stay intact except for the narrow charred edge and the
+translucent fire/smoke. Transparent source areas stay transparent, so the effect
+remains inside the window snapshot's original alpha. Fullscreen windows retain
+HyprWindowShade's default fullscreen policy.
+
+The shader uses two-octave noise, 32 procedural ember trajectories, and pale
+smoke wisps advected upward from earlier points on the burn. Sparks have
+individual birth times, lifetimes and sideways drift, with a bright core, halo
+and short streak. They are checked for activity before computing their burn-front
+origin. Smoke is broken up by moving noise and can remain visible after the flame
+passes. These are shader approximations, not a fluid or particle simulation.
+The original stylized shader remains in `shaders/burn-close-classic.glsl` and the
+first softer version in `shaders/burn-close-smoky.glsl`.
 
 Check the close seed generator and render its actual sequence through GLSL:
 
 ```bash
 mkdir -p build/randomization
 g++ -std=c++17 -O2 tools/test_close_seed.cpp -o build/randomization/test-close-seed
-build/randomization/test-close-seed > build/randomization/seeds.txt
-python3 tools/render.py --seeds build/randomization/seeds.txt --output build/randomization
+build/randomization/test-close-seed build/randomization/profiles.txt > build/randomization/seeds.txt
+python3 tools/render.py --seeds build/randomization/seeds.txt --profiles build/randomization/profiles.txt --output build/randomization
 ```
 
-The native test checks range and variation across 1,000 samples and fresh seeds
-across 900 interleaved workspace closes. The render test checks that actual seeds
-produce left-, middle-, and right-leading burns, and at least 12 distinct broad
-outlines in 18 closes. It groups similar outlines so tiny contour jitter cannot
-disguise repeated templates. `build/randomization/burn-patterns.png` compares the
-closes at the same animation phase. The old six-order shader fails this check;
-the continuous profile produced 17 distinct outlines from the same 18 seeds.
+The native test checks range and variation across 1,000 samples and compares
+900 interleaved workspace closes with their previous eight shapes. The render
+test checks 128 actual seeds at three animation phases, verifies CPU/GPU profile
+agreement, transparency and decreasing opaque area, and reports broad shape
+similarity in `build/randomization/variety.json`.
+`build/randomization/burn-patterns.png` compares the first 18 closes at the same
+animation phase. The comparison measures whole outlines rather than tiny
+flame/particle details, so cosmetic noise cannot disguise repeated templates.
+
 
 ## Test constant-size flames
 
@@ -160,30 +195,35 @@ which also activates the per-workspace pattern fix.
 
 ## Rendering cost
 
-The active shader keeps all 48 ember trajectories and the same flame/smoke
-detail. It skips expensive ember shading outside each tiny spark's visible halo,
-reuses the known birth phase instead of regenerating its burn schedule, and
-evaluates flame/smoke turbulence only inside their visible envelopes. Only
-exponentially tiny glow tails are culled. It keeps the original 1.15-second timing.
-The previous shader is preserved as `shaders/burn-close-detailed.glsl`.
+The current shader uses 32 sparks rather than 48, checks lifetime before
+calculating each active spark's geometry, and uses two-octave turbulence for flame warp and detail. This restores more
+texture than the first performance pass while keeping less work than the original
+three-octave fields.
+Flame and smoke calculations are limited to their visible envelopes. The previous
+active shader and plugin manifest are saved under `build/directions-before/` as
+a local rollback checkpoint; these generated artifacts are not included in Git.
 
-On 2026-10-14, warmed 800x550 single-shader draws on Mesa llvmpipe measured
-98.56 ms median before and 50.91 ms after (24 draws per version). This is a
-48.4% reduction in software-rendering time, not a live desktop GPU FPS result.
-Comparing 41 RGBA frames found seven changed channel values, each by one 8-bit
-step; all other values matched. Shader validation, uneven regional burning,
-smoke, ember visibility and transparency checks pass.
+On 2026-10-15, warmed 800x550 draws on the Intel HD 520 measured
+15.14 ms median before and 2.97 ms after (24 draws per version),
+about 80% less GPU draw time. The current p95 was 5.05 ms. Reports
+are in `build/directions-gpu-before/` and `build/middle-ground-gpu/`.
+
+These GPU timings measure a single shader pass, not total compositor frame time.
+The 800x550 validation source is smaller than many desktop windows, so live frame
+pacing still needs observation during ordinary use.
 
 Reproduce a software-renderer measurement and save raw comparison frames with:
 
 ```bash
 python3 tools/render.py --benchmark --save-frames --output build/benchmark
+# Use the actual GPU when a render device is available:
+LIBGL_ALWAYS_SOFTWARE=0 python3 tools/render.py --benchmark-only --output build/gpu-benchmark
 ```
 
-Before/after samples and images are in `build/performance-before/` and
-`build/performance-after/`; `build/performance-comparison.json` records the
-timings, shader hashes and pixel comparison. This measures the shader alone;
-compositor passes and live frame pacing still need observation on the desktop.
+`benchmark.json` records the renderer, shader hash, draw times and resolution.
+Native and GPU profile checks, smoke visibility, transparency and 128-close
+motion comparisons are saved under `build/middle-ground-gpu/`; the constant-size
+variant is checked under `build/middle-ground-size-gpu/`.
 
 The user created Btrfs root snapshot **29**, named **beforeFire**, before testing.
 That snapshot excludes `/home`, so the config backups are the separate undo path

@@ -6,6 +6,7 @@
 
 // --- DEFINE EXTERN VARIABLES ---
 HANDLE                                                PHANDLE = nullptr;
+CloseDurations                                        g_closeDurations;
 std::vector<CHyprSignalListener>                      g_Listeners;
 std::unordered_map<Desktop::View::CWindow*, std::string>        g_mWindowManualShaders;
 std::unordered_map<Desktop::View::CWindow*, WindowShaderState>  g_mWindowRuleShaders;
@@ -197,6 +198,14 @@ static int luaReloadShaders(lua_State* L) {
     (void)L;
     shadeActions::reloadShaders();
     return 0;
+}
+
+static int luaCloseDuration(lua_State* L) {
+    const std::string path = luaL_checkstring(L, 1);
+    if (lua_gettop(L) >= 2 && !g_closeDurations.set(path, luaL_checknumber(L, 2)))
+        return luaL_error(L, "close duration must be between 0.1 and 5 seconds");
+    lua_pushnumber(L, g_closeDurations.resolve(path));
+    return 1;
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
@@ -549,6 +558,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layeropenanim",      &luaLayerOpenAnim);
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layercloseanim",     &luaLayerCloseAnim);
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "reloadshaders",      &luaReloadShaders);
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "closeduration",      &luaCloseDuration);
 
     // Version is deliberately empty: releases are GitHub tags, and hyprpm ships
     // whatever commit `commit_pins` names. A number maintained here would be a
@@ -561,6 +571,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
     g_mWindowManualShaders.clear();
     g_mWindowRuleShaders.clear();
+    g_closeDurations.clear();
     g_mLayerNamespaceShaderMap.clear();
     g_mWindowClassShaderMap.clear();
     g_mFailedShaderMtimes.clear();
@@ -622,4 +633,5 @@ APICALL EXPORT void PLUGIN_EXIT() {
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layeropenanim");
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layercloseanim");
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "reloadshaders");
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "closeduration");
 }

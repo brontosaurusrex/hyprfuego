@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render the real GLSL shader with Mesa EGL; verify alpha and save previews."""
 import ctypes
+import hashlib
 import argparse
 import os
 import json
@@ -33,8 +34,10 @@ def main():
     parser.add_argument("--shader", type=Path, default=ROOT / "shaders/burn-close.glsl")
     parser.add_argument("--output", type=Path, default=ROOT / "build")
     parser.add_argument("--benchmark", action="store_true", help="Measure warmed, synchronous shader draws on this EGL renderer")
+    parser.add_argument("--benchmark-only", action="store_true", help="Warm and time draws without running validation or generating previews")
     parser.add_argument("--save-frames", action="store_true", help="Save raw premultiplied frames for before/after comparisons")
     parser.add_argument("--seeds", type=Path, help="Validate additional per-close seeds, one number per line")
+    parser.add_argument("--profiles", type=Path, help="Compare native CPU profiles with the actual GLSL controls")
     args = parser.parse_args()
     display = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
     major, minor = ctypes.c_int(), ctypes.c_int()
@@ -92,8 +95,8 @@ def main():
     draw.rounded_rectangle(box, radius=16, fill=(24, 29, 38, 255))
     draw.text((150, 105), "HYPRFUEGO   /   burn on close", fill=(240, 230, 200, 255), font_size=22)
     draw.line((145, 148, 655, 148), fill=(62, 70, 83, 255), width=2)
-    for y, text in enumerate(["$ ./hyprfuego preview", "", "Window contents stay intact above the fire.",
-        "Flames rise from the bottom edge.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"]):
+    for y, text in enumerate(["$ ./hyprfuego preview", "", "Bottom-up burn / translucent smoke.",
+        "Original timing / fresh per-close curves.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"]):
         draw.text((150, 177 + y * 30), text, fill=(190, 215, 190, 255), font_size=17)
     data = np.asarray(source)
     GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, W, H, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, data)
@@ -105,6 +108,70 @@ def main():
         raw = GL.glReadPixels(0, 0, W, H, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE)
         return np.frombuffer(raw, np.uint8).reshape(H, W, 4)[::-1].copy()
 
+    def benchmark():
+        out = args.output
+        out.mkdir(parents=True, exist_ok=True)
+        timings = []
+        # Shader compilation and the preceding readback checks are excluded.
+        # No image download in the timed section; finish waits for each draw.
+        for repeat in range(3):
+            for phase in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85):
+                uniform("progress", phase)
+                GL.glFinish()
+                start = time.perf_counter()
+                GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+                GL.glFinish()
+                timings.append((time.perf_counter() - start) * 1000)
+        report = {"renderer": GL.glGetString(GL.GL_RENDERER).decode(),
+            "resolution": [W, H], "draws": len(timings),
+            "shader": str(args.shader), "shader_sha256": hashlib.sha256(args.shader.read_bytes()).hexdigest(), "seed": 0.37,
+            "median_ms": statistics.median(timings),
+            "p95_ms": float(np.percentile(timings, 95)), "samples_ms": timings}
+        (out / "benchmark.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(f"Shader draw benchmark: median {report['median_ms']:.2f} ms; p95 {report['p95_ms']:.2f} ms")
+    def close_context():
+        EGL.eglMakeCurrent(display, EGL.EGL_NO_SURFACE, EGL.EGL_NO_SURFACE, EGL.EGL_NO_CONTEXT)
+        EGL.eglDestroySurface(display, surface)
+        EGL.eglDestroyContext(display, ctx)
+        EGL.eglTerminate(display)
+
+    if args.benchmark_only:
+        for phase in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85) * 2:
+            render(phase)
+        benchmark()
+        close_context()
+        return
+
+    if args.profiles:
+        # Compare the original bottom-up profile on a spatial grid at three phases.
+        probe_source = args.shader.read_text().split("void main()", 1)[0] + """
+        void main() {
+            highp uint key = uint(seed * 16777216.0);
+            vec2 c = vec2(v_texcoord.x, 1.0 - v_texcoord.y);
+            fragColor = vec4(clamp(0.5 + 5.0 * vec3(c.y - burnFront(c.x, 0.3, key),
+                c.y - burnFront(c.x, 0.5, key), c.y - burnFront(c.x, 0.7, key)),
+                0.0, 1.0), 1.0);
+        }
+        """
+        probe = GL.glCreateProgram()
+        GL.glAttachShader(probe, vertex)
+        GL.glAttachShader(probe, shader(GL.GL_FRAGMENT_SHADER, probe_source))
+        GL.glLinkProgram(probe)
+        assert GL.glGetProgramiv(probe, GL.GL_LINK_STATUS), GL.glGetProgramInfoLog(probe)
+        GL.glUseProgram(probe)
+        GL.glViewport(0, 0, 9, 7)
+        native_profiles = np.loadtxt(args.profiles, ndmin=2)
+        for row in native_profiles:
+            GL.glUniform1f(GL.glGetUniformLocation(probe, "seed"), row[0])
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+            raw = GL.glReadPixels(0, 0, 9, 7, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE)
+            gpu = np.moveaxis(np.frombuffer(raw, np.uint8).reshape(7, 9, 4)[::-1, :, :3], -1, 0) / 255.0
+            assert np.max(np.abs(gpu - row[1:].reshape(3, 7, 9))) < 0.005, "CPU/GPU burn profiles differ"
+        GL.glUseProgram(program)
+        GL.glViewport(0, 0, W, H)
+        GL.glDeleteProgram(probe)
+        print("PASS: CPU/GPU broad profiles agree for", len(native_profiles), "closes at three phases")
+
     frames = [render(p) for p in np.linspace(0, 1, 41)]
     assert np.array_equal(frames[0], data), "First frame must preserve source"
     assert not frames[-1].any(), "Final frame must be fully transparent"
@@ -115,58 +182,73 @@ def main():
     # disappear monotonically; low-alpha gas is deliberately not counted as paper.
     areas = [np.count_nonzero(f[:, :, 3] >= 254) for f in frames]
     assert all(b <= a for a, b in zip(areas, areas[1:])), "Opaque window area must decrease over time"
-    # An off-centre window burns upward, with parts deliberately finishing first.
+    # The default seed is bottom-up and uses the original linear clock.
     mid = frames[20]
-    assert mid[110:160, 200:600, 3].mean() > 60, "Every part of the top disappeared too early"
-    assert mid[400:450, 200:600, 3].mean() < 30, "Bottom failed to burn; only translucent smoke should remain"
-    # In the burned region below the flame there should be translucent gas
-    # and a few warm, detached sparks, rather than another opaque rectangle.
-    residue = mid[320:430, 150:650]
-    translucent = (residue[:, :, 3] > 2) & (residue[:, :, 3] < 128)
-    assert np.count_nonzero(translucent) > 100, "Smoke is missing from burned region"
-    # Ember trajectories can cross this lower region at different times when
-    # effect scale changes. Check their visibility across the animation.
-    warm_pixels = 0
+    assert mid[110:160, 200:600, 3].mean() > 200, "Top disappeared too early"
+    assert mid[420:450, 200:600, 3].mean() < 40, "Bottom failed to ignite"
+    translucent = warm_pixels = visible_smoke = 0
     for frame in frames[6:35]:
-        rgb = frame[320:430, 150:650, :3].astype(np.float32)
-        warm = (rgb[:, :, 0] > rgb[:, :, 1] * 1.8) & (rgb[:, :, 0] > 10)
+        rgb = frame[:, :, :3].astype(np.float32)
+        alpha = frame[:, :, 3]
+        # Thin neutral smoke and warm sparks should survive away from paper.
+        neutral = np.max(rgb, axis=2) - np.min(rgb, axis=2) < 8
+        translucent += np.count_nonzero((alpha > 2) & (alpha < 50) & neutral)
+        visible_smoke = max(visible_smoke, np.count_nonzero((alpha > 24) & (alpha < 140) & neutral))
+        warm = (rgb[:, :, 0] > rgb[:, :, 1] * 1.8) & (rgb[:, :, 0] > 10) & (alpha < 200)
         warm_pixels += np.count_nonzero(warm)
-    assert warm_pixels > 20, "Detached embers are missing throughout the animation"
+    assert translucent > 100, "Thin smoke is missing throughout the animation"
+    assert visible_smoke > 100, "Smoke became too faint to see after the fire"
+    assert warm_pixels > 20, "Sparks are missing throughout the animation"
 
-    # Regions should burn at different rates, and the leading region should
-    # change with the per-close seed rather than always being the same side.
-    leading = []
-    for sample_seed in (0.17, 0.37, 0.71):
-        uniform("seed", sample_seed)
-        sample = render(0.5)
-        coverage = [np.mean(part[:, :, 3] >= 254)
-            for part in np.array_split(sample[90:460, 130:670], 3, axis=1)]
-        print("Opaque left/middle/right at seed", sample_seed, ":", [round(v, 3) for v in coverage])
-        assert max(coverage) - min(coverage) > 0.08, "Burn speed is too uniform across the window"
-        leading.append(int(np.argmin(coverage)))
-    assert len(set(leading)) > 1, "The same side always burns first"
+    def spatial_profile(paper):
+        return np.array([np.mean(cell) for row in np.array_split(paper, 7, axis=0)
+            for cell in np.array_split(row, 9, axis=1)])
+
     sample_seeds = (list(map(float, args.seeds.read_text().split())) if args.seeds
                     else list(np.linspace(0.031, 0.971, 18)))
-    counts = [0, 0, 0]
     profiles = []
     pattern_samples = []
+    motion_profiles = []
+    nearest_recent = []
     for sample_seed in sample_seeds:
         uniform("seed", sample_seed)
         sample = render(0.5)
         paper = sample[90:460, 130:670, 3] >= 254
-        coverage = [np.mean(part) for part in np.array_split(paper, 3, axis=1)]
-        counts[int(np.argmin(coverage))] += 1
-        # Measure the broad outline rather than fine flame/particle noise.
-        # Group near-identical outlines so small contour jitter cannot turn
-        # six broad templates into an apparent success.
-        profile = np.array([np.mean(part) for part in np.array_split(paper, 17, axis=1)])
+        profile = spatial_profile(paper)
         if all(np.sqrt(np.mean((profile - other) ** 2)) > 0.06 for other in profiles):
             profiles.append(profile)
-        pattern_samples.append((sample_seed, sample))
-    assert all(counts), "Per-close seeds failed to produce all three leading regions"
-    assert len(profiles) >= min(len(sample_seeds), 12), "Broad burn shapes still repeat too few templates"
-    print("Sampled leading left/middle/right:", counts)
+        if len(pattern_samples) < 18:
+            pattern_samples.append((sample_seed, sample))
+        # Judge motion across time, not just one outline halfway through.
+        motion = []
+        previous_area = W * H
+        for phase in (0.3, 0.5, 0.7):
+            frame = sample if phase == 0.5 else render(phase)
+            assert not frame[data[:, :, 3] == 0].any(), "Seeded shader leaked outside source alpha"
+            assert np.all(frame[:, :, :3] <= frame[:, :, 3:4]), "Seeded shader is not premultiplied"
+            opaque = frame[:, :, 3] >= 254
+            area = np.count_nonzero(opaque)
+            assert area <= previous_area, "Seeded opaque area increased"
+            previous_area = area
+            motion.extend(spatial_profile(opaque[90:460, 130:670]))
+        motion = np.array(motion)
+        if motion_profiles:
+            nearest_recent.append(min(float(np.sqrt(np.mean((motion - old) ** 2)))
+                for old in motion_profiles[-8:]))
+        motion_profiles.append(motion)
     print("Distinct broad burn outlines:", len(profiles), "of", len(sample_seeds))
+    distances = np.sqrt(np.mean((np.array(motion_profiles)[:, None, :]
+        - np.array(motion_profiles)[None, :, :]) ** 2, axis=2))
+    report = {"closes": len(sample_seeds), "distinct_midpoint_outlines": len(profiles),
+        "near_pairs_rms_under_0.06": int(np.count_nonzero(np.triu(distances < 0.06, 1))),
+        "recent_eight_min_rms": min(nearest_recent) if nearest_recent else None,
+        "recent_eight_median_rms": statistics.median(nearest_recent) if nearest_recent else None}
+    if args.profiles and nearest_recent:
+        assert min(nearest_recent) > 0.01, "Native seed selection repeated recent rendered motion"
+    args.output.mkdir(parents=True, exist_ok=True)
+    (args.output / "variety.json").write_text(json.dumps(report, indent=2) + "\n")
+    print("Recent-eight motion distance: minimum", report["recent_eight_min_rms"],
+        "; median", report["recent_eight_median_rms"])
     uniform("seed", 0.37)
 
     checker = Image.new("RGB", (W, H), (42, 46, 52))
@@ -205,23 +287,7 @@ def main():
     if args.save_frames:
         np.savez_compressed(out / "frames.npz", frames=np.stack(frames))
     if args.benchmark:
-        timings = []
-        # Shader compilation and the preceding readback checks are excluded.
-        # No image download in the timed section; finish waits for each draw.
-        for repeat in range(3):
-            for phase in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85):
-                uniform("progress", phase)
-                GL.glFinish()
-                start = time.perf_counter()
-                GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
-                GL.glFinish()
-                timings.append((time.perf_counter() - start) * 1000)
-        report = {"renderer": GL.glGetString(GL.GL_RENDERER).decode(),
-            "resolution": [W, H], "draws": len(timings),
-            "median_ms": statistics.median(timings),
-            "p95_ms": float(np.percentile(timings, 95)), "samples_ms": timings}
-        (out / "benchmark.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"Shader draw benchmark: median {report['median_ms']:.2f} ms; p95 {report['p95_ms']:.2f} ms")
+        benchmark()
     previews[0].save(out / "burn-preview.gif", save_all=True,
         append_images=previews[1:] + [previews[-1]] * 18, duration=30, loop=0)
     sheet = Image.new("RGB", (W*3//2, (H//2+28)*2), (20, 23, 29))
@@ -232,12 +298,9 @@ def main():
         sd.text((x+12, y+6), f"progress {index/40:.0%}", fill="white")
     sheet.save(out / "burn-contact-sheet.png")
     print("PASS: exact endpoints, transparency bounds, premultiplied alpha,")
-    print("      uneven seeded burn speeds, decreasing opaque area, smoke and detached embers.")
+    print("      bottom-up ignition, original timing, decreasing opaque area, smoke and sparks.")
     print("Preview:", out / "burn-preview.gif")
-    EGL.eglMakeCurrent(display, EGL.EGL_NO_SURFACE, EGL.EGL_NO_SURFACE, EGL.EGL_NO_CONTEXT)
-    EGL.eglDestroySurface(display, surface)
-    EGL.eglDestroyContext(display, ctx)
-    EGL.eglTerminate(display)
+    close_context()
 
 
 if __name__ == "__main__":

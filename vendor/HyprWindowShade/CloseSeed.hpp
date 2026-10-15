@@ -1,5 +1,7 @@
 #pragma once
+#include "BurnProfile.hpp"
 #include <cstdint>
+#include <deque>
 #include <unordered_map>
 
 // A sequence per plugin instance, sampled ONCE at fadeout creation. Window
@@ -8,17 +10,29 @@ class CloseSeedSequence {
   public:
     explicit CloseSeedSequence(uint64_t initial) : m_state(initial) {}
     float next(int64_t workspace = 0) {
-        static constexpr uint8_t leading[] = {0, 2, 1, 2, 1, 0};
-        auto previous = m_lastLeading.find(workspace);
-        uint32_t order;
-        do {
-            order = static_cast<uint32_t>(randomBits() % 6);
-        } while (previous != m_lastLeading.end() && leading[order] == previous->second);
-        m_lastLeading[workspace] = leading[order];
-        // Encode the permutation directly in one of six bins. Leave generous
-        // margins so float rounding cannot move it into the neighbouring bin.
-        const float jitter = static_cast<float>(randomBits() >> 40) / 16777216.0f;
-        return (static_cast<float>(order) + 0.125f + jitter * 0.75f) / 6.0f;
+        // Cap remembered workspaces as well as candidate work per close.
+        if (!m_recent.count(workspace) && m_recent.size() >= 128) m_recent.clear();
+        auto& recent = m_recent[workspace];
+        const auto first = static_cast<uint32_t>(randomBits() >> 40);
+        uint32_t best = 0;
+        BurnProfile::Shape bestShape{};
+        float bestDistance = -1.0f;
+        for (int attempt = 0; attempt < 64; ++attempt) {
+            const auto candidate = attempt == 0 ? first : static_cast<uint32_t>(randomBits() >> 40);
+            const auto shape = BurnProfile::shape(candidate);
+            float nearest = 1.0f;
+            for (const auto& previous : recent)
+                nearest = std::min(nearest, BurnProfile::distance(shape, previous));
+            if (nearest > bestDistance) {
+                best = candidate;
+                bestShape = shape;
+                bestDistance = nearest;
+            }
+            if (nearest >= 0.04f) break;
+        }
+        recent.push_back(bestShape);
+        if (recent.size() > 8) recent.pop_front();
+        return static_cast<float>(best) / 16777216.0f;
     }
 
   private:
@@ -31,5 +45,5 @@ class CloseSeedSequence {
     }
 
     uint64_t m_state;
-    std::unordered_map<int64_t, uint8_t> m_lastLeading;
+    std::unordered_map<int64_t, std::deque<BurnProfile::Shape>> m_recent;
 };

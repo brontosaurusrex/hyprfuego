@@ -194,6 +194,7 @@ static bool resolveAnimDurationNoGL(const std::string& path, float ruleOverride,
     float declared = -1.0f;
     if (!declaredAnimTiming(path, declared, overlay)) return false;
 
+    ruleOverride = g_closeDurations.resolve(path, ruleOverride);
     if (ruleOverride > 0.0f)     duration = std::min(ruleOverride, MAX_ANIM_DURATION);
     else if (declared > 0.0f)    duration = std::min(declared, MAX_ANIM_DURATION);
     else                         duration = DEFAULT_ANIM_DURATION;
@@ -1762,7 +1763,7 @@ static void tagFadeout(Desktop::IFadeout* key, const std::string& path, float du
     FadeoutAnim anim;
     anim.path     = path;
     anim.start    = std::chrono::steady_clock::now();
-    anim.duration = duration; // <0 -> resolved from the shader on first draw
+    anim.duration = g_closeDurations.resolve(path, duration); // fixed at close creation
     anim.seed     = seeds.next(seedGroup);
     anim.srcPos   = srcPos;
     anim.srcSize  = srcSize;
@@ -2165,7 +2166,7 @@ hkFadeoutCreate(PHLWINDOW window, Hyprutils::Memory::CSharedPointer<Render::IFra
     // (noAnim, or nothing rendered it) never reaches the retiming below.
     Hyprutils::Utils::CScopeGuard preCloseGuard([] { clearPreCloseGoals(); });
 
-    if (!result || !window) return result;
+    if (!result || !window || !isMainAppWindow(window)) return result;
 
     auto it = g_mWindowRuleShaders.find(window.get());
     if (it == g_mWindowRuleShaders.end() || it->second.closeAnim.empty()) return result;
@@ -2427,6 +2428,9 @@ void applyShaderRulesSafe(PHLWINDOW pWindow) {
 
     fillAnim(state.openAnim,   state.openAnimDuration,  defaults.openAnim,   defaults.openAnimDuration);
     fillAnim(state.closeAnim,  state.closeAnimDuration, defaults.closeAnim,  defaults.closeAnimDuration);
+    // Remember child status while its parent still exists. This also prevents
+    // a child from acquiring a burn when its parent is destroyed first.
+    if (!isMainAppWindow(pWindow)) state.closeAnim.clear();
     fillAnim(state.moveAnim,   state.moveSettle,        defaults.moveAnim,   defaults.moveSettle);
     fillAnim(state.resizeAnim, state.resizeSettle,      defaults.resizeAnim, defaults.resizeSettle);
     fillAnim(state.workspaceAnim, state.workspaceSettle, defaults.workspaceAnim, defaults.workspaceSettle);
