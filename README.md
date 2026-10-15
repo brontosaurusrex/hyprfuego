@@ -103,6 +103,15 @@ not spill onto unrelated desktop areas. It uses three-octave turbulence and 48
 procedural sparks. Inactive sparks are rejected before calculating their
 geometry, and pixels outside visible effect envelopes skip expensive shading.
 
+The flame palette concentrates pale highlights at the hot base, with softer amber
+bodies and faint tips. Broad upward flow has more weight than fine turbulence;
+faster-burning patches produce taller tongues, while slower patches stay low.
+The local burn schedule also controls flame height, without extra noise samples.
+Smoke is a restrained warm grey. Sparks vary in brightness, size and lifetime,
+with smaller halos. A horizontal spark bound skips burn-profile evaluation for
+pixels outside the spark's possible footprint. These refinements use the same
+three noise octaves and 48 spark slots. Both shader size variants include them.
+
 ## Validation and previews
 
 ```bash

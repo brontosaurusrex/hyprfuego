@@ -22,8 +22,9 @@ float noise(vec2 p) {
                mix(hash21(i + vec2(0, 1)), hash21(i + vec2(1)), f.x), f.y);
 }
 float fbm(vec2 p) {
-    return 0.57 * noise(p) + 0.28 * noise(p * 2.03 + 17.1)
-         + 0.15 * noise(p * 4.11 - 9.7);
+    // Favor broad flow over fine grain, using the same three noise samples.
+    return 0.68 * noise(p) + 0.24 * noise(p * 2.03 + 17.1)
+         + 0.08 * noise(p * 4.11 - 9.7);
 }
 vec4 over(vec4 foreground, vec4 background) {
     return foreground + background * (1.0 - foreground.a);
@@ -57,10 +58,12 @@ vec2 burnSchedule(float x, highp uint key) {
     timing = clamp((timing - low) / max(high - low, 0.0001), 0.0, 1.0);
     return vec2(mix(0.005, 0.14, timing), mix(0.61, 0.98, timing));
 }
-float burnFront(float x, float p, highp uint key) {
-    vec2 schedule = burnSchedule(x, key);
+float advanceFront(vec2 schedule, float p) {
     float local = clamp((burnClock(p) - schedule.x) / (schedule.y - schedule.x), 0.0, 1.0);
     return mix(-0.18, 1.18, local);
+}
+float burnFront(float x, float p, highp uint key) {
+    return advanceFront(burnSchedule(x, key), p);
 }
 void main() {
     vec4 src = texture(tex, v_texcoord);
@@ -75,7 +78,11 @@ void main() {
     float variant = seed * 23.71;
     highp uint profileKey = uint(seed * 16777216.0);
     float t = p * 3.8;
-    float front = burnFront(uv.x, p, profileKey);
+    // Reuse this column's existing schedule: shorter burn time means taller fire.
+    vec2 localSchedule = burnSchedule(uv.x, profileKey);
+    float front = advanceFront(localSchedule, p);
+    float fastBurn = clamp((0.84 - (localSchedule.y - localSchedule.x)) / 0.235, 0.0, 1.0);
+    float flameScale = mix(0.65, 2.15, fastBurn * fastBurn);
     // A stationary irregular contour burns monotonically; the gas moves freely.
     float contour = fbm(vec2(pos.x * 14.0 + variant, pos.y * 9.0));
     float edge = (pos.y - front) + (contour - 0.5) * 0.055;
@@ -87,46 +94,50 @@ void main() {
     vec4 paper = src * remain;
     paper.rgb = mix(paper.rgb, vec3(0.018, 0.009, 0.004) * paper.a, charred * 0.94);
 
-    // A few taller tongues, like burning paper, rather than a uniform comb.
+    // Broad, coherent tongues rise quickly; thin tips fade into the air.
     float plume = pow(noise(vec2(uv.x * 4.0, variant + 41.5)), 3.0);
-    float height = 0.045 + 0.09 * fbm(vec2(pos.x * 12.0 + variant, -t * 1.15))
+    float height = 0.045 + 0.09 * fbm(vec2(pos.x * 9.0 + variant, -t * 1.4))
                  + 0.30 * plume;
+    // Quiet patches stay low; fast patches produce taller, localized tongues.
+    height *= flameScale;
     float h = max(edge, 0.0) / height;
     float flameAlpha = 0.0;
     vec3 fireColor = vec3(0);
-    // Away from the flame envelope, only an exponentially tiny core tail
-    // remains (less than 1e-10 alpha at 0.25 window heights). Avoid generating
-    // two full turbulence fields for those otherwise unaffected pixels.
-    if (edge > -0.25 && (h < 1.8 || edge < 0.25)) {
-        float warp = fbm(vec2(pos.x * 9.0 + variant, pos.y * 7.0 - t * 1.7));
-        vec2 gas = vec2(pos.x * 24.0 + variant + (warp - 0.5) * 2.8,
-                        pos.y * 11.0 - t * 3.6);
+    // Outside the visible envelope only a tiny core tail remains: below
+    // 2e-7 at -0.12 height units, and below 1e-14 at +0.25. Skip
+    // two turbulence fields there; reuse the remaining fade for heat colour.
+    if (edge > -0.12 && (h < 1.45 || edge < 0.25)) {
+        float warp = fbm(vec2(pos.x * 6.5 + variant, pos.y * 3.5 - t * 2.0));
+        vec2 gas = vec2(pos.x * 20.0 + variant + (warp - 0.5) * 1.3,
+                        pos.y * 5.5 - t * 4.2);
         float detail = fbm(gas);
-        float body = smoothstep(0.22 + h * 0.42, 0.62 + h * 0.28, detail);
-        flameAlpha = body * exp(-h * 1.65)
-            * smoothstep(-0.025, 0.012, edge) * (1.0 - smoothstep(0.7, 1.8, h)) * alive;
-        float core = exp(-abs(edge) * 100.0) * smoothstep(0.28, 0.72, detail) * alive;
-        flameAlpha = clamp(flameAlpha * 0.88 + core * 0.65, 0.0, 0.94) * src.a;
-        float heat = clamp(body * 0.6 + exp(-h * 3.0) * 0.4, 0.0, 1.0);
-        fireColor = mix(vec3(0.42, 0.045, 0.008), vec3(1.0, 0.34, 0.035), heat);
-        fireColor = mix(fireColor, vec3(1.0, 0.87, 0.52), pow(heat, 3.8) * 0.85);
+        float body = smoothstep(0.20 + h * 0.48, 0.65 + h * 0.32, detail);
+        float falloff = exp(-h * 1.9);
+        flameAlpha = body * falloff
+            * smoothstep(-0.025, 0.012, edge) * (1.0 - smoothstep(0.45, 1.45, h)) * alive;
+        float core = exp(-abs(edge) * 130.0) * smoothstep(0.28, 0.72, detail) * alive;
+        flameAlpha = clamp(flameAlpha * 0.80 + core * 0.70, 0.0, 0.92) * src.a;
+        float heat = clamp(body * 0.45 + falloff * falloff * 0.55, 0.0, 1.0);
+        fireColor = mix(vec3(0.30, 0.06, 0.012), vec3(0.95, 0.43, 0.10), heat);
+        float hot = heat * heat;
+        fireColor = mix(fireColor, vec3(1.0, 0.91, 0.70), hot * hot * hot * 0.90);
     }
 
     // Smoke originates below its current position and drifts upward. A soft
     // emission envelope and broken density avoid a gray strip glued to the edge.
     float smokeAlpha = 0.0;
-    vec3 smokeColor = vec3(0.46, 0.45, 0.43);
+    vec3 smokeColor = vec3(0.40, 0.38, 0.35);
     if (edge > -0.65 && edge < 0.65) {
-        float curl = noise(vec2(pos.x * 5.0 + variant, pos.y * 4.0 - t * 0.65));
+        float curl = noise(vec2(pos.x * 5.0 + variant, pos.y * 3.0 - t * 0.8));
         vec2 emissionUV = uv + vec2((curl - 0.5) * 0.065 / (pixels.x / pixels.y), 0.13);
         float smokeEdge = 1.0 - emissionUV.y - burnFront(emissionUV.x, max(p - 0.12, 0.0), profileKey);
-        float density = fbm(vec2(pos.x * 16.0 + (curl - 0.5) * 3.0 + variant,
-                                   pos.y * 7.0 - t * 1.8));
+        float density = fbm(vec2(pos.x * 16.0 + (curl - 0.5) * 1.8 + variant,
+                                   pos.y * 5.8 - t * 1.7));
         float envelope = exp(-abs(smokeEdge) * 8.0);
         float trail = smoothstep(-0.65, -0.30, edge)
                     * (1.0 - smoothstep(0.35, 0.65, edge));
-        smokeAlpha = smoothstep(0.30, 0.75, density) * trail * envelope * alive * 0.34 * src.a;
-        smokeColor = mix(vec3(0.38, 0.37, 0.35), vec3(0.68, 0.67, 0.64), curl);
+        smokeAlpha = smoothstep(0.27, 0.73, density) * trail * envelope * alive * 0.30 * src.a;
+        smokeColor = mix(vec3(0.32, 0.30, 0.28), vec3(0.58, 0.57, 0.54), curl);
     }
 
     // Sparse sparks are born on the current burn front. Check lifetime
@@ -141,30 +152,32 @@ void main() {
         if (age <= 0.0 || age >= 0.34) continue;
         float b = hash21(vec2(id + variant, 8.91));
         float c = hash21(vec2(id + variant, 15.77));
-        float life = 0.18 + c * 0.16;
+        float life = 0.11 + c * 0.23;
         if (age >= life) continue;
         float age01 = age / life;
-        vec2 origin = vec2(b, burnFront(b, birth, profileKey));
-        float drift = (c - 0.5) * 0.6;
-        float x = origin.x * aspect + (age * drift + sin(age * 16.0 + a * 17.0) * age * 0.13);
-        float rise = 1.0 + a * 1.2;
-        float y = origin.y + (age * rise - age * age * 0.7);
+        float drift = (c - 0.5) * 0.4;
+        float x = b * aspect + (age * drift + sin(age * 12.0 + a * 17.0) * age * 0.08);
+        float rise = 0.85 + a * 1.25;
+        // Reject horizontally before evaluating the expensive burn profile.
+        // The shear can shift x by at most ten vertical radii times its slope.
+        vec2 r = max(vec2(1.0, 1.8) / pixels.y,
+                     vec2(0.0018 + c * 0.003, 0.003 + a * 0.007));
+        float shear = drift / rise;
+        if (abs(pos.x - x) > 10.0 * (r.x + r.y * abs(shear))) continue;
+        float originY = burnFront(b, birth, profileKey);
+        float y = originY + (age * rise - age * age * 0.7);
         vec2 d = pos - vec2(x, y);
-        d.x -= d.y * drift / rise;
-        // Scale with the window instead of subpixel device-sized dots. Each
-        // spark has a bright core, an orange halo and a short motion streak.
-        vec2 r = max(vec2(1.6, 2.8) / pixels.y,
-                     vec2(0.0035 + c * 0.002, 0.007 + a * 0.006));
+        d.x -= d.y * shear;
         // The halo beyond ten radii is below 1e-10 alpha. Most pixels miss a
         // tiny ember entirely; reject them before divides, exponentials/color.
         if (any(greaterThan(abs(d), r * 10.0))) continue;
         float distance2 = dot(d / r, d / r);
         float hotCore = exp(-distance2 * 1.9);
-        float brightness = (1.4 * hotCore + 0.30 * exp(-distance2 * 0.22))
-            * smoothstep(0.0, 0.025, age) * (1.0 - smoothstep(0.55, 1.0, age01)) * alive;
+        float brightness = ((0.55 + c * 1.25) * hotCore + 0.10 * exp(-distance2 * 0.35))
+            * smoothstep(0.0, 0.025, age) * (1.0 - smoothstep(0.35, 1.0, age01)) * alive;
         float alpha = clamp(brightness, 0.0, 0.96) * src.a;
-        vec3 color = mix(vec3(1.0, 0.52, 0.055), vec3(0.85, 0.16, 0.015), age01);
-        color = mix(color, vec3(1.0, 0.92, 0.63), hotCore * (1.0 - age01) * 0.8);
+        vec3 color = mix(vec3(1.0, 0.46, 0.085), vec3(0.52, 0.075, 0.012), age01);
+        color = mix(color, vec3(1.0, 0.86, 0.52), hotCore * (1.0 - age01) * 0.55);
         sparks = over(vec4(color * alpha, alpha), sparks);
     }
     vec4 smoke = vec4(smokeColor * smokeAlpha, smokeAlpha);
