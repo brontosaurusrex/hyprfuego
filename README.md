@@ -4,13 +4,15 @@ A Compiz-inspired burn animation for closing Hyprland windows, with turbulent
 flames, a charred edge, 48 drifting sparks and translucent smoke. Each close gets
 a fresh bottom-up burn shape. The default duration is **1.15 seconds**.
 
-![Hyprfuego burn animation](docs/images/burn-preview.gif)
+![Files window closing with Hyprfuego on a live desktop](docs/images/files-burn-desktop.png)
 
+[Animation](docs/images/burn-preview.gif) ·
 [Animation snapshots](docs/images/burn-contact-sheet.png) ·
 [Different close patterns](docs/images/burn-patterns.png)
 
-The previews are rendered from the actual shader on a synthetic window. This is
-a shader recreation, not a port of Compiz's particle engine.
+The screenshot shows a live Files window closing. The linked animation and
+snapshots are rendered from the actual shader on a synthetic window. This is a
+shader recreation, not a port of Compiz's particle engine.
 
 ## Compatibility
 

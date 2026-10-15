@@ -71,6 +71,10 @@ hashes. These synthetic previews contain no desktop captures. Scratch data,
 including the 128 seeds, profiles, variety report and benchmark, stays in
 `build/previews/`. The default `build/burn-*.png` and GIF paths are refreshed too.
 
+The README's main image, `docs/images/files-burn-desktop.png`, is a manually
+captured live desktop screenshot. The preview generator leaves it unchanged;
+it is not included in the generated asset manifest.
+
 ## Performance
 
 The accepted profile uses 48 sparks and the original three-octave turbulence.
