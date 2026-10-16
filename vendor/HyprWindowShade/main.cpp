@@ -203,7 +203,7 @@ static int luaReloadShaders(lua_State* L) {
 static int luaCloseDuration(lua_State* L) {
     const std::string path = luaL_checkstring(L, 1);
     if (lua_gettop(L) >= 2 && !g_closeDurations.set(path, luaL_checknumber(L, 2)))
-        return luaL_error(L, "close duration must be between 0.1 and 5 seconds");
+        return luaL_error(L, "close duration must be between 0.1 and 20 seconds");
     lua_pushnumber(L, g_closeDurations.resolve(path));
     return 1;
 }

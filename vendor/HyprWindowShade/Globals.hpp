@@ -180,7 +180,7 @@ extern bool g_bIntermediatePass;
 inline constexpr float DEFAULT_ANIM_DURATION = 0.3f;
 // Upper bound on how long we'll hold a fadeout open, so a bad `// @duration`
 // can never strand a snapshot on screen forever.
-inline constexpr float MAX_ANIM_DURATION = 5.0f;
+inline constexpr float MAX_ANIM_DURATION = 20.0f;
 
 // When a window with a `shader_open:` rule maps we record the timestamp only —
 // not the resolved shader. Window rules are applied by a separate event whose
@@ -566,6 +566,7 @@ CBox hkLayerFadeoutRenderBox(void* thisptr);
 // which the close path needs and getOrCompileShader cannot offer. False when the
 // source can't be read.
 bool declaredAnimTiming(const std::string& shaderPath, float& duration, bool& overlay);
+bool naturalCloseReflow(const std::string& shaderPath);
 
 // --- CLOSE-DRIVEN MOVE RETIMING ---
 // Closing a tiled window frees its tile, and the neighbours animate into it on

@@ -49,9 +49,21 @@ by PID or window size. Apps must report their relationships correctly.
 value over cached window-rule durations. `tagFadeout()` copies that value once,
 so animations already underway retain their original clock.
 
+The runtime API accepts 0.1–20 seconds. The native animation duration cap is
+20 seconds too, so longer close preferences are not truncated to five seconds.
+
 The manager applies preferences to the main and size-preview shaders at plugin
 load/reload and rolls them back if a settings update fails. Window tags stay
 stable, preventing stale `@5` values from overriding a new one-second preference.
+
+## Independent close tails
+
+`// @reflow natural` lets a close shader keep its full visual lifetime while
+surviving windows use their ordinary layout movement timing. The hook reads the
+directive once per close and skips only `retimeMovesForClose`. Snapshot capture,
+rendering and cleanup retain the existing path. The compositor removes the
+closing client from focus/input handling normally; the snapshot receives no
+input. Teleport uses this policy, while burn retains synchronized reflow.
 
 All native patches require rebuilding and reloading the plugin. GLSL edits alone
 reload automatically. See [development and validation](../docs/development.md).

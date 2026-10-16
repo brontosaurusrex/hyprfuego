@@ -8,7 +8,7 @@
 class CloseDurations {
   public:
     bool set(const std::string& path, float seconds) {
-        if (path.empty() || !std::isfinite(seconds) || seconds < 0.1f || seconds > 5.0f) return false;
+        if (path.empty() || !std::isfinite(seconds) || seconds < 0.1f || seconds > 20.0f) return false;
         m_values[path] = seconds;
         return true;
     }

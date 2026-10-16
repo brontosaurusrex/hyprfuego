@@ -39,6 +39,7 @@ def main():
     parser.add_argument("--seeds", type=Path, help="Validate additional per-close seeds, one number per line")
     parser.add_argument("--profiles", type=Path, help="Compare native CPU profiles with the actual GLSL controls")
     args = parser.parse_args()
+    teleport = args.shader.parent.name == "teleport"
     display = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
     major, minor = ctypes.c_int(), ctypes.c_int()
     EGL.eglInitialize(display, major, minor)
@@ -93,10 +94,12 @@ def main():
     draw = ImageDraw.Draw(source)
     box = (120, 80, 680, 470)
     draw.rounded_rectangle(box, radius=16, fill=(24, 29, 38, 255))
-    draw.text((150, 105), "HYPRFUEGO   /   burn on close", fill=(240, 230, 200, 255), font_size=22)
+    draw.text((150, 105), "HYPRFUEGO   /   transporter" if teleport else "HYPRFUEGO   /   burn on close", fill=(240, 230, 200, 255), font_size=22)
     draw.line((145, 148, 655, 148), fill=(62, 70, 83, 255), width=2)
-    for y, text in enumerate(["$ ./hyprfuego preview", "", "48 sparks / turbulent flames / rising smoke.",
-        "A fresh bottom-up burn for each close.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"]):
+    lines = (["$ ./hyprfuego effect teleport", "", "Matter dissolves. Photons linger.",
+        "The next window is already ready.", "", "[transport] Independent energy wake", "[ready] Hyprland + HyprWindowShade"] if teleport else ["$ ./hyprfuego preview", "", "48 sparks / turbulent flames / rising smoke.",
+        "A fresh bottom-up burn for each close.", "", "[render] Compiz-inspired close animation", "[ready] Hyprland 0.56.2 + HyprWindowShade"])
+    for y, text in enumerate(lines):
         draw.text((150, 177 + y * 30), text, fill=(190, 215, 190, 255), font_size=17)
     data = np.asarray(source)
     GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, W, H, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, data)
@@ -139,6 +142,16 @@ def main():
         for phase in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85) * 2:
             render(phase)
         benchmark()
+        close_context()
+        return
+
+    if teleport:
+        from render_teleport import validate_and_preview
+        def replace_source(pixels):
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, W, H, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, pixels)
+        validate_and_preview(render, uniform, data, args.output, replace_source, args.save_frames)
+        if args.benchmark:
+            benchmark()
         close_context()
         return
 
