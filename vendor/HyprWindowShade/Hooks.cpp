@@ -2184,8 +2184,7 @@ hkFadeoutCreate(PHLWINDOW window, Hyprutils::Memory::CSharedPointer<Render::IFra
         // rather than replacing it, so windowsOut is still the real close clock
         // and vanilla's reflow already agrees with it. Retiming there would
         // desync the two rather than sync them.
-        if (resolveAnimDurationNoGL(it->second.closeAnim, it->second.closeAnimDuration, dur, overlay) && !overlay
-            && !naturalCloseReflow(it->second.closeAnim))
+        if (resolveAnimDurationNoGL(it->second.closeAnim, it->second.closeAnimDuration, dur, overlay) && !overlay)
             retimeMovesForClose(window.get(), dur);
     }
 

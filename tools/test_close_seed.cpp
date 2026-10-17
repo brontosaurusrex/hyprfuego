@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
         assert(std::isfinite(seed) && seed >= 0.0f && seed < 1.0f);
         samples.insert(seed);
         const auto key = BurnProfile::key(seed);
-        // Preserve the original linear clock and the original five-control range.
+        // Preserve the linear clock and enforce the half-strength curve range.
         float previousStep = 0.2f;
         for (int phase = 1; phase <= 4; ++phase) {
             const float step = BurnProfile::clock(phase * 0.2f + 0.1f)
@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
             low = std::min(low, height);
             high = std::max(high, height);
         }
-        assert(high - low < 0.54f);
+        assert(high - low < 0.27f);
         if (i < 128) {
             std::cout << std::setprecision(9) << seed << '\n';
             if (profiles) {
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
     assert(samples.size() > 990);
     std::cerr << "PASS: 1000 close seeds in range; " << samples.size()
               << " distinct values, independent of window address.\n";
-    std::cerr << "PASS: original curve range and linear clock preserved.\n";
+    std::cerr << "PASS: half-strength curve range and linear clock preserved.\n";
     std::map<int, std::deque<BurnProfile::Shape>> previous;
     float nearest = 1.0f;
     // Compare actual broad shapes across three phases, including the last

@@ -189,56 +189,8 @@ class Controls(unittest.TestCase):
         self.assertEqual(app.duration_seconds(), 1.15)
         self.assertNotIn("@", app.rule())
 
-    def test_duration_range_is_saved_including_fractional_endpoints(self):
-        for value in ("0.1", "0.75", "5.1", "12.5", "20"):
-            with self.subTest(value=value):
-                app.configure_duration(value)
-                self.assertEqual(app.duration_seconds(), float(value))
-        app.ctl.assert_not_called()
-
-    def test_effect_switch_preserves_duration_and_personal_module_lines(self):
-        app.enable()
-        app.configure_duration("0.75")
-        original_main = self.main.read_text()
-        self.module.write_text(self.module.read_text() + "-- personal note\n")
-        app.configure_effect("teleport")
-        self.assertEqual(app.effect_name(), "teleport")
-        self.assertIn("effects/teleport/close.glsl", self.module.read_text())
-        self.assertIn("-- personal note", self.module.read_text())
-        self.assertEqual(app.duration_seconds(), 0.75)
-        self.assertEqual(self.main.read_text(), original_main)
-        app.configure_effect("burn")
-        self.assertIn("effects/burn/burn-close.glsl", self.module.read_text())
-        self.assertEqual(app.duration_seconds(), 0.75)
-
-    def test_effect_defaults_and_disabled_selection_need_no_desktop(self):
-        app.configure_effect("teleport")
-        self.assertEqual(app.duration_seconds(), 1.6)
-        self.assertEqual(app.active_shader(True), app.active_shader())
-        app.configure_effect("burn")
-        self.assertEqual(app.duration_seconds(), 1.15)
-        self.assertNotEqual(app.active_shader(True), app.active_shader())
-        app.ctl.assert_not_called()
-
-    def test_unknown_effect_changes_nothing(self):
-        with self.assertRaises(ValueError):
-            app.configure_effect("../other")
-        self.assertFalse(app.SETTINGS.exists())
-        app.ctl.assert_not_called()
-
-    def test_failed_effect_switch_restores_settings_and_rule(self):
-        app.enable()
-        app.configure_effect("burn")
-        previous_settings = app.SETTINGS.read_text()
-        previous_module = self.module.read_text()
-        app.apply_duration.side_effect = [RuntimeError("runtime update failed"), None]
-        with self.assertRaisesRegex(RuntimeError, "runtime update failed"):
-            app.configure_effect("teleport")
-        self.assertEqual(app.SETTINGS.read_text(), previous_settings)
-        self.assertEqual(self.module.read_text(), previous_module)
-
     def test_invalid_duration_does_not_touch_files_or_desktop(self):
-        for value in ("nan", "inf", "0", "0.09", "-1", "20.1", "bad", True):
+        for value in ("nan", "inf", "0", "-1", "5.1", "bad", True):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 app.configure_duration(value)
         self.assertFalse(app.SETTINGS.exists())
@@ -280,7 +232,7 @@ class Controls(unittest.TestCase):
 class RuntimeTiming(unittest.TestCase):
     def test_saved_duration_is_sent_to_both_shader_paths(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(app, "SETTINGS", Path(tmp) / "config.json"), patch.object(app, "ctl") as ctl:
-            for seconds in (0.1, 0.75, 5.1, 20, 1):
+            for seconds in (5, 1):
                 app.SETTINGS.write_text('{"duration": ' + str(seconds) + '}')
                 app.apply_duration()
                 script = ctl.call_args.args[1]

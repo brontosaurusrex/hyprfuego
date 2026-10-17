@@ -4,12 +4,12 @@
 
 | Path | Purpose |
 | --- | --- |
-| `hyprfuego` | Build, preview, effect selection, duration and configuration controls |
-| `effects/burn/burn-close.glsl` | Burn close shader |
-| `effects/burn/burn-close-size-preview.glsl` | Optional constant-size flame experiment |
-| `effects/burn/burn-close-{classic,smoky,detailed}.glsl` | Preserved historical burn variants |
-| `effects/teleport/close.glsl` | Transporter dissolve and independent energy tail |
-| `shaders/` | Compatibility symlinks to the burn shaders |
+| `hyprfuego` | Build, preview, duration and configuration controls |
+| `shaders/burn-close.glsl` | Active close shader |
+| `shaders/burn-close-size-preview.glsl` | Optional constant-size flame experiment |
+| `shaders/burn-close-classic.glsl` | Preserved original stylized shader |
+| `shaders/burn-close-smoky.glsl` | Preserved first softer shader |
+| `shaders/burn-close-detailed.glsl` | Preserved shader before envelope optimizations |
 | `vendor/HyprWindowShade/` | Pinned plugin with local integration patches |
 | `tools/` | Native regression tests, control tests and GLSL rendering |
 | `docs/images/` | Published previews and their source/asset hashes |
@@ -21,6 +21,9 @@ against the last eight closes on the same workspace. It tries at most 64 seeds,
 accepting an RMS distance of 0.04 or choosing the most different candidate.
 This reduces recent repetition; it cannot guarantee that no two closes resemble
 each other. History resets when the plugin unloads.
+
+The broad burn outline blends halfway toward a uniform front, halving its
+vertical variation at every phase. Flame turbulence and spark count are unchanged.
 
 ## Build and checks
 
@@ -47,44 +50,20 @@ python3 tools/render.py --seeds build/tests/seeds.txt --profiles build/tests/pro
 ```
 
 The seed test checks 1,000 samples and 900 interleaved workspace closes. The
-duration regression checks the 0.1–20-second range, a five-to-one-second change
-with stale per-window values, unrelated shaders and animations already in
-progress. Rendering compares the CPU/GPU profiles across 128 closes and checks
-visibility and alpha invariants.
+duration regression checks a five-to-one-second change with stale per-window
+values, unrelated shaders and animations already in progress. Rendering compares
+the CPU/GPU profiles across 128 closes and checks visibility and alpha invariants.
 Software-rendered checks do not replace a live desktop preview.
-
-Teleport's renderer checks exact endpoints, alpha bounds, monotonically decreasing
-opaque area and 18 seeded wakes. It renders a second source with different RGB
-but identical alpha: from 40% onward both results must be pixel-identical, proving
-that the tail contains only generated energy. Energy must remain visible at 65%.
-The RGB comparison also checks that material breaks up in the upper, middle and
-lower thirds together, rather than following a directional wipe. All wake pixels
-must have red <= green <= blue, guarding the requested bluish-white palette.
-Control regressions also cover effect switching, preserved duration preferences,
-the selected effect's default duration and failed-switch rollback.
-
-`// @reflow natural` opts a close shader out of survivor movement retiming. It
-does not shorten the snapshot lifetime or use an overlay that would inherit the
-compositor's fade-out opacity. Focus and input remain owned by Hyprland; the
-snapshot is visual and receives no input. Burn omits the directive and retains
-its synchronized reflow.
-
-The live two-window teleport check on 2026-10-16 used a two-second effect: the
-surviving window had focus after 0.087 seconds and received keyboard input after
-0.324 seconds. A screenshot at 60% shows the energy wake over the active window.
-Local evidence is in `build/teleport-handoff/`. The test restored the original
-workspace and notification setting, and left the selected effect/duration intact.
 
 ## Updating published previews
 
 ```bash
 python3 tools/update_previews.py --hardware
-python3 tools/update_previews.py --effect teleport --hardware
 ```
 
-Omit `--hardware` to use Mesa software rendering. The default burn command compiles
-and runs the native regressions, validates both GLSL variants, and renders the
-burn shader. It copies these generated assets into `docs/images/`:
+Omit `--hardware` to use Mesa software rendering. The command compiles and runs
+the native regressions, validates both GLSL variants, and renders the main shader.
+It copies these generated assets into `docs/images/`:
 
 - `burn-preview.gif`: one complete burn, followed by a pause.
 - `burn-contact-sheet.png`: six phases of that burn.
@@ -99,10 +78,6 @@ The README's main image, `docs/images/files-burn-desktop.png`, is a manually
 captured live desktop screenshot. The preview generator leaves it unchanged;
 it is not included in the generated asset manifest.
 
-Teleport generates `teleport-preview.gif`, `teleport-contact-sheet.png` and
-`teleport-manifest.json`. Its manifest records the content/energy checks and
-source hashes separately from the burn's native profile validation.
-
 ## Performance
 
 The accepted profile uses 48 sparks and the original three-octave turbulence.
@@ -115,17 +90,11 @@ version:
 | Shader | Median | 95th percentile |
 | --- | --- | --- |
 | Before the performance work | 15.14 ms | 16.18 ms |
-| After optimization: 48 sparks, three-octave turbulence | 4.48 ms | 6.48 ms |
+| Current: 48 sparks, three-octave turbulence | 4.48 ms | 6.48 ms |
 
 This run used about 70% less GPU draw time. Raw samples and tested shader hashes
 are in [the baseline report](benchmarks/intel-hd520-before.json) and
 [the current report](benchmarks/intel-hd520-current.json).
-
-These burn measurements predate the subsequent palette/flow refinements; the
-reports retain the exact tested shader hashes. The video-inspired teleport
-shader measured on 2026-10-16 took **2.00 ms median / 4.20 ms p95** at the same
-800×550 resolution on the Intel HD 520. Its samples and shader hash are in the
-[teleport report](benchmarks/intel-hd520-teleport.json).
 
 These are single-pass shader timings, excluding compilation and image readback.
 They are not whole-desktop frame times or FPS measurements. Larger windows,
@@ -149,7 +118,7 @@ python3 tools/render.py --benchmark --save-frames --output build/software-benchm
 ./hyprfuego preview --size-test
 ```
 
-With burn selected, this previews 760×480 and 440×260 windows using a 600-device-pixel reference for
+This previews 760×480 and 440×260 windows using a 600-device-pixel reference for
 flames, smoke and sparks. It affects only the preview windows; ordinary windows
 keep the active shader. To validate it offscreen with the generated seeds:
 

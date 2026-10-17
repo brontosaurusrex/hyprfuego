@@ -27,31 +27,9 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardware", action="store_true", help="Use the available GPU instead of Mesa software rendering")
-    parser.add_argument("--effect", choices=("burn", "teleport"), default="burn")
     args = parser.parse_args()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     IMAGES.mkdir(parents=True, exist_ok=True)
-    if args.effect == "teleport":
-        output = OUTPUT / "teleport"
-        environment = os.environ.copy()
-        environment["LIBGL_ALWAYS_SOFTWARE"] = "0" if args.hardware else "1"
-        shader = ROOT / "effects/teleport/close.glsl"
-        run("glslangValidator", "-S", "frag", shader)
-        run(sys.executable, "tools/render.py", "--shader", shader,
-            "--benchmark", "--output", output, env=environment)
-        names = ("teleport-preview.gif", "teleport-contact-sheet.png")
-        for name in names:
-            shutil.copyfile(output / name, IMAGES / name)
-        manifest = json.loads((output / "validation.json").read_text())
-        report = json.loads((output / "benchmark.json").read_text())
-        sources = ("effects/teleport/close.glsl", "tools/render.py", "tools/render_teleport.py",
-                   "vendor/HyprWindowShade/Hooks.cpp", "vendor/HyprWindowShade/ShaderEngine.cpp")
-        manifest.update(renderer=report["renderer"], default_duration_seconds=1.6,
-                        sources={name: digest(ROOT / name) for name in sources},
-                        assets={name: digest(IMAGES / name) for name in names})
-        (IMAGES / "teleport-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        print("Updated teleport previews in", IMAGES.relative_to(ROOT))
-        return
     seed_test = OUTPUT / "test-close-seed"
     duration_test = OUTPUT / "test-close-duration"
     run("g++", "-std=c++17", "-O2", "tools/test_close_seed.cpp", "-o", seed_test)

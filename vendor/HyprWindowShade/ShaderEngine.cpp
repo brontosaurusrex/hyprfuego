@@ -387,17 +387,3 @@ bool declaredAnimTiming(const std::string& shaderPath, float& duration, bool& ov
     overlay  = parseDeclaredOverlay(src);
     return true;
 }
-
-// A tail can keep drawing after the layout has already settled. Read only once
-// per close, never on the render hot path. Missing/unreadable means legacy sync.
-bool naturalCloseReflow(const std::string& shaderPath) {
-    std::ifstream source(shaderPath);
-    if (!source.is_open()) return false;
-    static const std::regex directive(R"(^[ \t]*//[ \t]*@reflow[ \t]+natural[ \t]*$)");
-    std::string line;
-    while (std::getline(source, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (std::regex_match(line, directive)) return true;
-    }
-    return false;
-}

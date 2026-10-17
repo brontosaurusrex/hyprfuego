@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and manage window-close effects for HyprWindowShade."""
+"""Build and manage a Compiz-inspired burn on close for HyprWindowShade."""
 import argparse
 import hashlib
 import json
@@ -15,11 +15,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
-EFFECTS = {
-    "burn": (ROOT / "effects/burn/burn-close.glsl", ROOT / "effects/burn/burn-close-size-preview.glsl"),
-    "teleport": (ROOT / "effects/teleport/close.glsl", ROOT / "effects/teleport/close.glsl"),
-}
-SHADER = EFFECTS["burn"][0]
+SHADER = ROOT / "shaders/burn-close.glsl"
 VENDOR = ROOT / "vendor/HyprWindowShade"
 COMMIT = "efb50993780079460b0cbed1363e2166a2de1d9f"
 MAIN = Path.home() / ".config/hypr/hyprland.lua"
@@ -30,13 +26,13 @@ SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "h
 
 def validate_duration(value):
     if isinstance(value, bool):
-        raise ValueError("Duration must be a number from 0.1 to 20 seconds.")
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.")
     try:
         seconds = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Duration must be a number from 0.1 to 20 seconds.") from exc
-    if not math.isfinite(seconds) or not 0.1 <= seconds <= 20.0:
-        raise ValueError("Duration must be a number from 0.1 to 20 seconds.")
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.") from exc
+    if not math.isfinite(seconds) or not 0.1 <= seconds <= 5.0:
+        raise ValueError("Duration must be a number from 0.1 to 5 seconds.")
     return seconds
 
 
@@ -46,35 +42,21 @@ def settings():
         raise ValueError(f"Expected a JSON object in {SETTINGS}")
     if "duration" in value:
         validate_duration(value["duration"])
-    effect = value.get("effect", "burn")
-    if not isinstance(effect, str) or effect not in EFFECTS:
-        raise ValueError("Unknown effect. Choose burn or teleport.")
     return value
-
-
-def effect_name():
-    return settings().get("effect", "burn")
-
-
-def active_shader(size_test=False):
-    return EFFECTS[effect_name()][int(size_test)]
 
 
 def duration_seconds():
     configured = settings().get("duration")
     if configured is not None:
         return validate_duration(configured)
-    match = re.search(r"(?m)^// @duration\s+([0-9.]+)", active_shader().read_text())
+    match = re.search(r"(?m)^// @duration\s+([0-9.]+)", SHADER.read_text())
     return validate_duration(match[1] if match else 1.15)
 
 
 def apply_duration():
     seconds = duration_seconds()
     script = ["assert(hl.plugin.HyprWindowShade.closeduration, 'Run ./hyprfuego reload to update the duration API')"]
-    # Include compatibility paths for windows mapped before the folder migration.
-    paths = {shader for variants in EFFECTS.values() for shader in variants}
-    paths.update(ROOT / "shaders" / name for name in ("burn-close.glsl", "burn-close-size-preview.glsl"))
-    for shader in sorted(paths):
+    for shader in (SHADER, ROOT / "shaders/burn-close-size-preview.glsl"):
         script.append("assert(math.abs(hl.plugin.HyprWindowShade.closeduration("
             + json.dumps(str(shader)) + f", {seconds:.9g}) - {seconds:.9g}) < 0.00001)")
     ctl("eval", "\n".join(script))
@@ -89,28 +71,7 @@ def configure_duration(value=None):
         updated.pop("duration", None)
     else:
         updated["duration"] = validate_duration(value)
-    configure_settings(updated)
-    print(f"Duration: {duration_seconds():g} seconds" + (" (applied)" if enabled() else " (saved)"))
-
-
-def enabled():
-    return MAIN.exists() and START in MAIN.read_text()
-
-
-def configure_effect(value=None):
-    if value is None:
-        print(f"Effect: {effect_name()}. Available: {', '.join(EFFECTS)}")
-        return
-    if value not in EFFECTS:
-        raise ValueError("Unknown effect. Choose burn or teleport.")
-    updated = settings()
-    updated["effect"] = value
-    configure_settings(updated)
-    print(f"Effect: {value}" + (" (applied)" if enabled() else " (saved)"))
-
-
-def configure_settings(updated):
-    active = enabled()
+    active = MAIN.exists() and START in MAIN.read_text()
     previous_settings = SETTINGS.read_text() if SETTINGS.exists() else None
     previous_module = MODULE.read_text() if active and MODULE.exists() else None
     pattern = re.compile(r'^hl\.window_rule\(\{name="hyprfuego-close",.*\}\)$', re.M)
@@ -138,6 +99,7 @@ def configure_settings(updated):
             ctl("reload")
             apply_duration()
         raise
+    print(f"Duration: {duration_seconds():g} seconds" + (" (applied)" if active else " (saved)"))
 
 
 def run(*args, capture=True):
@@ -286,12 +248,12 @@ def reload_plugin():
             ctl("plugin", "load", old)
         raise
     configerrors()
-    print("Hyprfuego plugin reloaded. Close a normal application window to check the selected effect.")
+    print("Hyprfuego plugin reloaded. Close a normal application window to check the contents burn.")
 
 
 def rule(app=".*", name="hyprfuego-close", fallback=False, shader=None):
     tag = "+shader_close_default:" if fallback else "+shader_close:"
-    path = str(shader or active_shader())
+    path = str(shader or SHADER)
     return "hl.window_rule({name=" + json.dumps(name) + ",match={class=" + json.dumps(app) + "},tag=" + json.dumps(tag + path) + "})"
 
 
@@ -303,14 +265,14 @@ def preview(size_test=False):
     process = None
     try:
         windows = [("Large", 760, 480), ("Small", 440, 260)] if size_test else [("Preview", 760, 480)]
-        shader = active_shader(size_test)
+        shader = ROOT / "shaders/burn-close-size-preview.glsl" if size_test else SHADER
         for index, (label, width, height) in enumerate(windows):
             app = f"hyprfuego-preview-{os.getpid()}-{index}"
             lua = "hl.window_rule({name=" + json.dumps(app + "-size") + ",match={class=" + json.dumps("^"+app+"$") + "},float=true,size={" + str(width) + "," + str(height) + "},center=true})\n"
             ctl("eval", lua + rule("^" + app + "$", app, shader=shader))
             configerrors()
-            print(label + " window: watch the " + effect_name() + " effect when it closes.", flush=True)
-            demo = 'printf "\\n  HYPRFUEGO: ' + label + '\\n\\n  Closing in 5 seconds...\\n\\n"; sleep 5'
+            print(label + " window: watch its flame size when it closes.", flush=True)
+            demo = 'printf "\\n  HYPRFUEGO: ' + label + '\\n\\n  Burning in 5 seconds...\\n\\n"; sleep 5'
             process = subprocess.Popen(["kitty", "--config", "NONE", "--class", app,
                 "--title", "Hyprfuego " + label.lower(), "--override", "background=#20242d",
                 "--override", "foreground=#eee5cf", "bash", "-c", demo])
@@ -319,7 +281,7 @@ def preview(size_test=False):
                 raise RuntimeError("The preview terminal failed.")
             time.sleep(duration_seconds() + 0.25)
         if size_test:
-            print("Size test finished. Normal windows keep their selected effect.")
+            print("Size test finished. Normal windows still use the original shader.")
         else:
             print("Preview finished. Enable for all windows with: ./hyprfuego enable")
     finally:
@@ -389,7 +351,7 @@ def enable():
             if newly_loaded:
                 ctl("plugin", "unload", artifact())
         raise
-    print(f"{effect_name().capitalize()} on close enabled. Duration: {duration_seconds():g} seconds. Backup:", backup)
+    print(f"Burn on close enabled. Duration: {duration_seconds():g} seconds. Backup:", backup)
     print("Disable with:", ROOT / "hyprfuego", "disable")
 
 
@@ -413,23 +375,21 @@ def disable():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load", "duration", "effect"])
-    parser.add_argument("seconds", nargs="?", help="With duration: seconds (0.1–20) or default; with effect: burn or teleport")
-    parser.add_argument("--size-test", action="store_true", help="Preview the selected effect on a large and a small window")
+    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load", "duration"])
+    parser.add_argument("seconds", nargs="?", help="With duration: seconds (0.1–5), or default")
+    parser.add_argument("--size-test", action="store_true", help="Preview constant-size flames on a large and a small window")
     args = parser.parse_args()
     if args.size_test and args.command != "preview":
         parser.error("--size-test is only available with preview")
-    if args.seconds is not None and args.command not in {"duration", "effect"}:
-        parser.error("A value is only available with the duration or effect command")
+    if args.seconds is not None and args.command != "duration":
+        parser.error("A duration value is only available with the duration command")
     if args.command == "duration":
         configure_duration(args.seconds)
-    elif args.command == "effect":
-        configure_effect(args.seconds)
     elif args.command == "build":
         build()
     elif args.command == "check":
-        run("glslangValidator", "-S", "frag", active_shader(), capture=False)
-        run(sys.executable, ROOT / "tools/render.py", "--shader", active_shader(), capture=False)
+        run("glslangValidator", "-S", "frag", SHADER, capture=False)
+        run(sys.executable, ROOT / "tools/render.py", capture=False)
     elif args.command == "preview":
         preview(args.size_test)
     elif args.command == "enable":
@@ -443,7 +403,6 @@ def main():
     else:
         print("Configured:", START in MAIN.read_text())
         print("Plugin loaded:", loaded())
-        print(f"Effect: {effect_name()}")
         print(f"Duration: {duration_seconds():g} seconds")
 
 

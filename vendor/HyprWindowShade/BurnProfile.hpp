@@ -33,7 +33,9 @@ inline float front(float x, float progress, uint32_t key) {
                                   / std::max(high - low, 0.0001f), 0.0f, 1.0f);
     const float start = 0.005f + 0.135f * timing, finish = 0.61f + 0.37f * timing;
     const float local = std::clamp((clock(progress) - start) / (finish - start), 0.0f, 1.0f);
-    return -0.18f + 1.36f * local;
+    // Match the shaders' half-strength broad curves.
+    const float baseline = std::clamp((clock(progress) - 0.0725f) / 0.7225f, 0.0f, 1.0f);
+    return -0.18f + 1.36f * (baseline + (local - baseline) * 0.5f);
 }
 using Shape = std::array<float, 9 * 7 * 3>;
 inline Shape shape(uint32_t key) {

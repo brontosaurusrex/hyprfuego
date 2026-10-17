@@ -1,8 +1,8 @@
 # Hyprfuego
 
-Window-close effects for Hyprland: a Compiz-inspired burn and an experimental
-transporter dissolve. Burn is the default, with turbulent flames, a charred edge, 48 drifting
-sparks and translucent smoke, with a fresh bottom-up shape for every close.
+A Compiz-inspired burn animation for closing Hyprland windows, with turbulent
+flames, a charred edge, 48 drifting sparks and translucent smoke. Each close gets
+a fresh bottom-up burn shape. The default duration is **1.15 seconds**.
 
 ![Files window closing with Hyprfuego on a live desktop](docs/images/files-burn-desktop.png)
 
@@ -13,33 +13,6 @@ sparks and translucent smoke, with a fresh bottom-up shape for every close.
 The screenshot shows a live Files window closing. The linked animation and
 snapshots are rendered from the actual shader on a synthetic window. This is a
 shader recreation, not a port of Compiz's particle engine.
-
-## Choose an effect
-
-```bash
-./hyprfuego effect           # current effect and available choices
-./hyprfuego effect teleport  # try the experimental transporter
-./hyprfuego effect burn      # return to fire
-```
-
-Effect selection applies to existing and newly opened main windows, and persists
-across logins. Your duration preference is preserved when switching effects.
-
-Teleport breaks up the window in random patches as narrow bluish-white shafts
-arrive, resolve into a bright cloud of softly glowing, independently shimmering
-particles, and scatter away. A gentle irregular drift and luminous haze connect
-the particles. The window content is completely gone by
-**38% of the duration**; transparent energy continues until the end. The closed
-window immediately stops receiving input. The next window can receive focus and
-keyboard input while the animation is still playing, and the layout keeps its
-normal movement speed. Burn keeps its existing synchronized layout movement.
-
-![Teleport dissolve and lingering energy](docs/images/teleport-preview.gif)
-
-[Teleport snapshots](docs/images/teleport-contact-sheet.png)
-
-Defaults are **1.15 seconds** for burn and **1.6 seconds** for teleport, unless
-you have saved a duration. The preview above is rendered from the real shader.
 
 ## Compatibility
 
@@ -66,9 +39,9 @@ cd ~/source/hyprfuego
 Already cloned? Start with `cd ~/source/hyprfuego`.
 
 The preview opens a floating terminal and closes it after five seconds, playing
-the selected effect at your configured duration. It restores the ordinary rules
-afterward, without editing your configuration files. If the effect was already
-enabled, it stays enabled.
+the burn at your selected duration. It restores the ordinary rules afterward,
+without editing your configuration files. If the effect was already enabled,
+it stays enabled.
 
 ## Enable and disable
 
@@ -103,20 +76,19 @@ automatically and do not require rebuilding the plugin.
 ./hyprfuego duration          # show the current duration
 ./hyprfuego duration 1.8      # slower: 1.8 seconds
 ./hyprfuego duration 0.8      # faster: 0.8 seconds
-./hyprfuego duration 20       # very slow: 20 seconds
-./hyprfuego duration default  # restore the selected effect's default
+./hyprfuego duration default  # restore the shader default (1.15 seconds)
 ```
 
-Supported values are **0.1–20 seconds**, including fractional values. Settings
-are saved in `~/.config/hyprfuego/config.json`, or under `$XDG_CONFIG_HOME` when set.
-Changes apply to future closes of existing and newly opened windows; an animation
+Supported values are **0.1–5 seconds**. Settings are saved in
+`~/.config/hyprfuego/config.json`, or under `$XDG_CONFIG_HOME` when set.
+Changes apply to future closes of existing and newly opened windows; a burn
 already underway keeps its original duration. Settings persist across logins and
-enable/disable cycles. Duration includes the complete effect and its fading tail.
+enable/disable cycles. Playback keeps the original linear progress curve.
 
 ## Window behavior
 
-Ordinary main windows receive the selected effect, including independent windows
-from the same app. Child/transient windows, modal dialogs and X11 override-redirect windows keep
+Ordinary main windows burn, including independent windows from the same app.
+Child/transient windows, modal dialogs and X11 override-redirect windows keep
 their normal close behavior. Apps must report their window relationships
 correctly; auxiliary windows advertised as independent main windows cannot be
 identified reliably from process ID alone. Normal GTK main windows, including
@@ -126,8 +98,9 @@ Open animations keep your settings. Window reflow caused by a burn close is
 retimed to finish with the burn; unrelated movement keeps its existing timing.
 Fullscreen windows retain HyprWindowShade's default fullscreen policy.
 
-Both effects stay within the snapshot's original alpha. Burn uses three-octave
-turbulence and 48 procedural sparks. Inactive sparks are rejected before calculating their
+The effect stays within the snapshot's original alpha, so flames and smoke do
+not spill onto unrelated desktop areas. It uses three-octave turbulence and 48
+procedural sparks. Inactive sparks are rejected before calculating their
 geometry, and pixels outside visible effect envelopes skip expensive shading.
 
 The flame palette concentrates pale highlights at the hot base, with softer amber
@@ -147,25 +120,20 @@ python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
 Shader checks need glslangValidator and Python with PyOpenGL, NumPy and Pillow.
-`check` validates the selected effect's exact endpoints, transparency boundaries,
-premultiplied alpha and decreasing opaque window area. Burn also checks smoke,
-sparks and close-shape variety. Teleport checks random breakup, a bluish-white
-palette and an energy-only tail after the window content disappears. Control
-tests cover configuration rollback, plugin ownership, effect switching, duration
-changes and preview cleanup.
+They verify exact endpoints, transparency boundaries, premultiplied alpha,
+decreasing opaque window area, visible smoke and sparks. Control tests cover
+configuration rollback, plugin ownership, duration changes and preview cleanup.
 
-To refresh the README's GIF and PNG snapshots:
+To refresh the README's GIF and PNG snapshots from the current shader:
 
 ```bash
-python3 tools/update_previews.py                    # burn, software rendering
-python3 tools/update_previews.py --effect teleport  # teleport, software rendering
-# Add --hardware to either command to use the available GPU.
+python3 tools/update_previews.py            # Mesa software rendering
+python3 tools/update_previews.py --hardware # available GPU
 ```
 
-Burn preview generation also validates 128 native-generated close seeds and
-CPU/GPU profile agreement. Teleport checks 18 seeded energy wakes. Source and
-asset hashes are recorded in the [burn manifest](docs/images/manifest.json) and
-[teleport manifest](docs/images/teleport-manifest.json).
+This also validates 128 native-generated close seeds and CPU/GPU profile
+agreement. Generated asset hashes and source hashes are recorded in
+[the preview manifest](docs/images/manifest.json).
 
 See [development and benchmarks](docs/development.md) for native tests,
 performance measurements and the constant-size flame experiment.
