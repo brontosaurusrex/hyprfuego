@@ -136,6 +136,29 @@ python3 tools/render.py --shader shaders/burn-close-size-preview.glsl --seeds bu
 
 ## Live regression checks
 
+To repeat a real app-closing tour across every installed Omarchy theme:
+
+```bash
+python3 tools/workspace_tour.py --dry-run
+python3 tools/workspace_tour.py --record --image ~/Pictures/example.png
+```
+
+The tour waits five seconds without an on-screen start notification, closes apps
+on workspaces 2–5 without saving, and applies each theme before starting the
+apps. Each theme gets two closing passes: the duration configured when the tour
+starts, then one second. Apps reopen between passes, with no added settling
+delay. The workspace 5 terminal runs btop. GIMP opens the
+specified picture; window positions and unsaved document contents are not
+restored. Workspace 1 windows are protected. Supported apps are Strata, Blender,
+Files/Nautilus, GIMP and foot. Unknown apps stop the tour before any changes.
+Use `--themes "Tokyo Night" "Nord"` for a shorter run. Recording uses Omarchy's
+fullscreen recorder without audio. Videos are saved in `~/Videos`; restore
+records and a `recording.json` containing the video path go under
+`build/app-tours/`. The original apps, theme, duration and workspace are restored
+afterward.
+Theme notifications show only the name and progress count, then dismiss within
+three seconds.
+
 The following behaviors have been checked on the pinned compositor:
 
 - Both window contents and decorations burn when an app unmaps with a null buffer.
