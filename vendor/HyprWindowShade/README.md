@@ -937,7 +937,7 @@ Declare any of these in your fragment shader and the plugin will populate them e
 | `is_dragging` | `float` | 1.0 while the user is physically dragging this window |
 | `anim_kind` | `float` | 0 none, 1 move, 2 resize, 3 workspace, 4 urgent, 5 focus, 6 unfocus |
 | `curve` | `float` | eased progress; **can go below 0.0 or above 1.0** — an overshoot bezier anticipates backwards before moving (measured range −0.04 … 1.02) |
-| `duration` | `float` | seconds the transform or close animation will take; −1 when no duration applies |
+| `duration` | `float` | seconds the transform will take; −1 when the curve has none |
 | `settle` | `float` | 0 → 1 across the post-motion tail; 0 while still moving |
 
 Names beginning with `plugin_` are reserved by the wrapper. Besides `plugin_alpha` it

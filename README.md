@@ -85,12 +85,6 @@ Changes apply to future closes of existing and newly opened windows; a burn
 already underway keeps its original duration. Settings persist across logins and
 enable/disable cycles. Playback keeps the original linear progress curve.
 
-Flame and smoke motion scales linearly with wipe speed, using a four-second
-reference: 4 seconds gives the original motion, 2 seconds doubles its animation
-rate, and 1 second gives four times the rate. The multiplier is `4 / duration`;
-the wipe keeps its selected duration. Updating to this version requires
-`./hyprfuego reload` once to pass each close's duration to the shader.
-
 ## Theme colors
 
 ```bash

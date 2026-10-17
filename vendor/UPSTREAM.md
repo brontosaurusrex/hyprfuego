@@ -57,9 +57,6 @@ filesystem work. Zero is the default uniform, preserving natural fire when off.
 value over cached window-rule durations. `tagFadeout()` copies that value once,
 so animations already underway retain their original clock.
 
-Close shaders receive that captured duration in the `duration` uniform, scoped
-to their animation stage. Motion shaders keep their existing duration behavior.
-
 The manager applies preferences to the main and size-preview shaders at plugin
 load/reload and rolls them back if a settings update fails. Window tags stay
 stable, preventing stale `@5` values from overriding a new one-second preference.

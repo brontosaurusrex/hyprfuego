@@ -33,15 +33,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shader", type=Path, default=ROOT / "shaders/burn-close.glsl")
     parser.add_argument("--output", type=Path, default=ROOT / "build")
-    parser.add_argument("--duration", type=float, default=1.15, help="Close duration in seconds (0.1–5; default: 1.15)")
     parser.add_argument("--benchmark", action="store_true", help="Measure warmed, synchronous shader draws on this EGL renderer")
     parser.add_argument("--benchmark-only", action="store_true", help="Warm and time draws without running validation or generating previews")
     parser.add_argument("--save-frames", action="store_true", help="Save raw premultiplied frames for before/after comparisons")
     parser.add_argument("--seeds", type=Path, help="Validate additional per-close seeds, one number per line")
     parser.add_argument("--profiles", type=Path, help="Compare native CPU profiles with the actual GLSL controls")
     args = parser.parse_args()
-    if not np.isfinite(args.duration) or not 0.1 <= args.duration <= 5.0:
-        parser.error("--duration must be between 0.1 and 5 seconds")
     display = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
     major, minor = ctypes.c_int(), ctypes.c_int()
     EGL.eglInitialize(display, major, minor)
@@ -92,7 +89,6 @@ def main():
     GL.glUniform1i(GL.glGetUniformLocation(program, "tex"), 0)
     uniform("surface_size", W, H)
     uniform("seed", 0.37)
-    uniform("duration", args.duration)
     source = Image.new("RGBA", (W, H))
     draw = ImageDraw.Draw(source)
     box = (120, 80, 680, 470)
@@ -129,7 +125,6 @@ def main():
         report = {"renderer": GL.glGetString(GL.GL_RENDERER).decode(),
             "resolution": [W, H], "draws": len(timings),
             "shader": str(args.shader), "shader_sha256": hashlib.sha256(args.shader.read_bytes()).hexdigest(), "seed": 0.37,
-            "duration": args.duration,
             "median_ms": statistics.median(timings),
             "p95_ms": float(np.percentile(timings, 95)), "samples_ms": timings}
         (out / "benchmark.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -228,33 +223,6 @@ def main():
         assert np.array_equal(render(0.5), frames[20]), "Disabling theming failed to restore natural fire"
         print("PASS: themed fire changes only RGB; alpha, geometry, endpoints and off-state pixels are preserved")
 
-    if GL.glGetUniformLocation(program, "duration") >= 0:
-        # Four seconds must match the legacy clock exactly, including when an
-        # older plugin leaves this uniform unset. Check the transparency and
-        # monotonic disappearance invariants across the supported durations.
-        phases = (0.2, 0.5, 0.8)
-        uniform("duration", 4.0)
-        reference = [render(phase) for phase in phases]
-        uniform("duration", 0.0)
-        assert all(np.array_equal(render(phase), frame) for phase, frame in zip(phases, reference)), \
-            "Four-second motion differs from the legacy clock"
-        for seconds in (0.1, 0.5, 1.0, 2.0, 4.0, 5.0):
-            uniform("duration", seconds)
-            assert np.array_equal(render(0.0), data), "Duration changed the initial window"
-            assert not render(1.0).any(), "Duration changed the transparent endpoint"
-            previous_area = W * H
-            for phase, original in zip(phases, reference):
-                frame = render(phase)
-                assert not frame[data[:, :, 3] == 0].any(), "Duration scaling leaked outside source alpha"
-                assert np.all(frame[:, :, :3] <= frame[:, :, 3:4]), "Duration scaling broke premultiplied alpha"
-                area = np.count_nonzero(frame[:, :, 3] >= 254)
-                assert area <= previous_area, "Duration scaling made the opaque window grow"
-                previous_area = area
-                if seconds != 4.0:
-                    assert np.count_nonzero(frame != original) > 100, "Duration did not change gas motion"
-        uniform("duration", args.duration)
-        print("PASS: 0.1–5s gas motion preserves transparency and monotonic burn; 4s matches the legacy clock")
-
     def spatial_profile(paper):
         return np.array([np.mean(cell) for row in np.array_split(paper, 7, axis=0)
             for cell in np.array_split(row, 9, axis=1)])
@@ -344,8 +312,7 @@ def main():
     if args.benchmark:
         benchmark()
     previews[0].save(out / "burn-preview.gif", save_all=True,
-        append_images=previews[1:] + [previews[-1]] * 18,
-        duration=max(10, round(args.duration * 1000 / 40 / 10) * 10), loop=0)
+        append_images=previews[1:] + [previews[-1]] * 18, duration=30, loop=0)
     sheet = Image.new("RGB", (W*3//2, (H//2+28)*2), (20, 23, 29))
     sd = ImageDraw.Draw(sheet)
     for i, index in enumerate([0, 9, 17, 24, 31, 40]):

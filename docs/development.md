@@ -62,15 +62,6 @@ neutral accent brightness, theme switches, and colors retained by active closes.
 The renderer checks blue, pink and neutral tints, unchanged alpha and geometry,
 and restoration of natural fire when the tint is disabled.
 
-Use `python3 tools/render.py --duration 1 --output build/speed-scaling/1s`
-to validate and preview a selected duration. Flame and smoke turbulence use
-`4 / duration` times the original progress-based clock in both active shader
-variants. This is linear in wipe speed, with the original appearance retained
-at four seconds. Spark trajectories and the burn schedule keep their clocks.
-The plugin supplies each close's captured duration to its animation stage,
-including intermediate framebuffer rendering, so changing the setting does not
-change an animation already in progress. Native changes require a reload.
-
 ## Updating published previews
 
 ```bash
@@ -144,29 +135,6 @@ python3 tools/render.py --shader shaders/burn-close-size-preview.glsl --seeds bu
 ```
 
 ## Live regression checks
-
-To repeat a real app-closing tour across every installed Omarchy theme:
-
-```bash
-python3 tools/workspace_tour.py --dry-run
-python3 tools/workspace_tour.py --record --image ~/Pictures/example.png
-```
-
-The tour waits five seconds without an on-screen start notification, closes apps
-on workspaces 2–5 without saving, and applies each theme before starting the
-apps. Each theme gets two closing passes: the duration configured when the tour
-starts, then one second. Apps reopen between passes, with no added settling
-delay. The workspace 5 terminal runs btop. GIMP opens the
-specified picture; window positions and unsaved document contents are not
-restored. Workspace 1 windows are protected. Supported apps are Strata, Blender,
-Files/Nautilus, GIMP and foot. Unknown apps stop the tour before any changes.
-Use `--themes "Tokyo Night" "Nord"` for a shorter run. Recording uses Omarchy's
-fullscreen recorder without audio. Videos are saved in `~/Videos`; restore
-records and a `recording.json` containing the video path go under
-`build/app-tours/`. The original apps, theme, duration and workspace are restored
-afterward.
-Theme notifications show only the name and progress count, then dismiss within
-three seconds.
 
 The following behaviors have been checked on the pinned compositor:
 
