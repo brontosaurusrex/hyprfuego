@@ -1,5 +1,5 @@
 {
-  "renderer": "llvmpipe (LLVM 22.1.8, 256 bits)",
+  "renderer": "Mesa Intel(R) HD Graphics 520 (SKL GT2)",
   "resolution": [
     800,
     550
@@ -8,16 +8,19 @@
   "default_duration_seconds": 1.15,
   "validated_closes": 128,
   "sources": {
-    "shaders/burn-close.glsl": "9bfce5f753928a1b54618325e9001ee16f8a6890b7e4a4146b2c32c4f32787ca",
-    "tools/render.py": "a772efaee29ccc6ee3300db4685eb691c4e5f7a0403926881f18b6ad0336294a",
-    "vendor/HyprWindowShade/BurnProfile.hpp": "9d8116e4458eb5365c2582303e591655917c7058a4133861cb7c57b26ddee105",
-    "vendor/HyprWindowShade/CloseSeed.hpp": "b87aebdca4de7b3e1992ffea22e6c0b359fc643dfc17d5b480d332f128eb523a",
+    "shaders/burn-close.glsl": "a7b4809da4b338da2473ff0a3b9255762fae8d56226e2e62014df4ccc6f402c7",
+    "shaders/burn-close-size-preview.glsl": "a351318bef5305015f4d3a4fe58cf9699c18447f105bfd1faccae09840c8d398",
+    "tools/render.py": "cb62e68cbf5bf09e6b19fec30facfb19fbb6085fd1ae75801d40aa79fd21645a",
+    "tools/update_previews.py": "d89f7a666998feda8123865db5cd6b72bc0cf6ce712a8ef3bdf4f26bbb422372",
+    "tools/test_close_seed.cpp": "d3d205037ea026605211eb006b2eea6b2abace2fb98bd77a43accd4b453cf8b2",
+    "vendor/HyprWindowShade/BurnProfile.hpp": "b32fa05d224962db7f730534ee2ba5f9ed6097939c0240b10725989798271a7f",
+    "vendor/HyprWindowShade/CloseSeed.hpp": "5f584850880aade749a62e495b99cab91a70708ff6d40fe21efff0a141033eac",
     "vendor/HyprWindowShade/ThemeColors.hpp": "4c4b6af3894c944980278b87cbf1b4b4acc4b6de251c7f8cba6bcd51a47033b2"
   },
   "assets": {
-    "burn-preview.gif": "f490494c6131551acf9b97fa64a0a67a58fd26fe675d1f6c88ef775dd0b840b3",
-    "burn-contact-sheet.png": "941a3a2c3eced097998b58ff10271e4f317df4630c65a7877805810b9447c3c6",
-    "burn-patterns.png": "a3d2dd05f9d027a817834343d1965c87ce5131c9e81ef4d7de71e0c965b653a3",
-    "burn-theme-colors.png": "4d2fe9a2b3221d000d3bac85da61377f0c57298665f6794bd5b381ceef481111"
+    "burn-preview.gif": "6fe47acfb43eb435944d4e3f8b6c4d65f3527e7f44c269233965dc80eb01defd",
+    "burn-contact-sheet.png": "702e3d170ec6dcde56a379c16a8c3b1ea6884247f2f1b8f9421eec9b15d4b753",
+    "burn-patterns.png": "14af76ec020930a5e2387754f44de7913b8ea10bf2bdc0412c4100c62b9b6226",
+    "burn-theme-colors.png": "257062f3145e6cd0e09593e17a7d7b252527ce7f6791f95ec03ce4a583d786b4"
   }
 }

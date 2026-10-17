@@ -7,7 +7,8 @@ a fresh bottom-up burn shape. The default duration is **1.15 seconds**.
 Most shapes use five smooth control points, with occasional broader four-point
 and more detailed six-point shapes. Point spacing varies independently, and the
 selector avoids shapes similar to the last sixteen closes on the workspace.
-The smooth joins and existing height limits are preserved.
+The smooth joins and existing height limits are preserved, along with the flame,
+smoke and spark animation.
 
 ![Files window closing with Hyprfuego on a live desktop](docs/images/files-burn-desktop.png)
 
@@ -18,6 +19,10 @@ The smooth joins and existing height limits are preserved.
 The screenshot shows a live Files window closing. The linked animation and
 snapshots are rendered from the actual shader on a synthetic window. This is a
 shader recreation, not a port of Compiz's particle engine.
+
+The [pattern sheet](docs/images/burn-patterns.png) shows 18 consecutive generated
+closes at the same point in the animation, making the outline variety easier to
+compare.
 
 ## Compatibility
 
@@ -157,7 +162,8 @@ python3 tools/update_previews.py --hardware # available GPU
 ```
 
 This also validates 128 native-generated close seeds and CPU/GPU profile
-agreement. Generated asset hashes and source hashes are recorded in
+agreement, including the sixteen-close workspace history. Generated asset hashes
+and source hashes are recorded in
 [the preview manifest](docs/images/manifest.json).
 
 See [development and benchmarks](docs/development.md) for native tests,

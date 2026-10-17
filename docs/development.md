@@ -85,8 +85,9 @@ It copies these generated assets into `docs/images/`:
 - `burn-theme-colors.png`: blue, pink and neutral flame palettes at 50% progress.
 
 `manifest.json` records the renderer, default duration, seed and source/asset
-hashes. These synthetic previews contain no desktop captures. Scratch data,
-including the 128 seeds, profiles, variety report and benchmark, stays in
+hashes, including both shader variants, the native profile regression and the
+preview generator. These synthetic previews contain no desktop captures. Scratch
+data, including the 128 seeds, profiles, variety report and benchmark, stays in
 `build/previews/`. The default `build/burn-*.png` and GIF paths are refreshed too.
 
 The README's main image, `docs/images/files-burn-desktop.png`, is a manually
@@ -99,17 +100,31 @@ The accepted profile uses 48 sparks and the original three-octave turbulence.
 It retains early lifetime rejection, spark halo culling and flame/smoke envelope
 checks. These changes reduce work while retaining the selected visual settings.
 
-Warmed 800×550 draws on an Intel HD 520, measured on 2026-10-15 with 24 draws per
-version:
+The smooth-profile variety change was measured on an Intel HD 520 with 24 warmed
+800×550 draws per version:
+
+| Shader | Median | 95th percentile |
+| --- | --- | --- |
+| Theme-colors checkpoint, five control points | 3.24 ms | 7.07 ms |
+| Four/five/six control points with independent spacing | 3.68 ms | 6.49 ms |
+
+The median increased by 0.45 ms (about 14%) in this run. Raw samples and exact
+shader hashes are in [the profile baseline](benchmarks/intel-hd520-smooth-variety-before.json)
+and [the updated profile report](benchmarks/intel-hd520-smooth-variety-after.json).
+Both retain 48 sparks and three-octave turbulence.
+
+For historical context, the earlier envelope and spark-culling optimization was
+measured on 2026-10-15, also with 24 warmed 800×550 draws per version:
 
 | Shader | Median | 95th percentile |
 | --- | --- | --- |
 | Before the performance work | 15.14 ms | 16.18 ms |
-| Current: 48 sparks, three-octave turbulence | 4.48 ms | 6.48 ms |
+| After that optimization | 4.48 ms | 6.48 ms |
 
 This run used about 70% less GPU draw time. Raw samples and tested shader hashes
-are in [the baseline report](benchmarks/intel-hd520-before.json) and
-[the current report](benchmarks/intel-hd520-current.json).
+are in [the historical baseline](benchmarks/intel-hd520-before.json) and
+[the historical optimized report](benchmarks/intel-hd520-current.json). Those
+hashes describe that earlier shader, rather than the current profile variety.
 
 These are single-pass shader timings, excluding compilation and image readback.
 They are not whole-desktop frame times or FPS measurements. Larger windows,

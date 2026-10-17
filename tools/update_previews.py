@@ -53,7 +53,8 @@ def main():
         shutil.copyfile(OUTPUT / name, ROOT / "build" / name)
     shutil.copyfile(OUTPUT / "variety.json", ROOT / "build/variety.json")
     report = json.loads((OUTPUT / "benchmark.json").read_text())
-    sources = ("shaders/burn-close.glsl", "tools/render.py",
+    sources = ("shaders/burn-close.glsl", "shaders/burn-close-size-preview.glsl",
+        "tools/render.py", "tools/update_previews.py", "tools/test_close_seed.cpp",
         "vendor/HyprWindowShade/BurnProfile.hpp", "vendor/HyprWindowShade/CloseSeed.hpp",
         "vendor/HyprWindowShade/ThemeColors.hpp")
     duration = float(re.search(r"(?m)^// @duration\s+([0-9.]+)", (ROOT / sources[0]).read_text())[1])
