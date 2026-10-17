@@ -44,19 +44,31 @@ float profileControl(highp uint key, highp uint channel) {
     return float(profileHash(key ^ (channel * 0x9e3779b9u)) >> 8u) / 16777216.0;
 }
 float burnClock(float p) { return clamp(p, 0.0, 1.0); }
+int controlPointCount(highp uint key) {
+    float choice = profileControl(key, 20u);
+    return choice < 0.20 ? 4 : (choice < 0.80 ? 5 : 6);
+}
 vec2 burnSchedule(float x, highp uint key) {
-    // The original five-control curve profile; no independently surging knots.
+    // Keep the same smooth joins and height limits, with 4/5/6 control points.
+    int count = controlPointCount(key);
     float a = profileControl(key, 10u), b = profileControl(key, 11u);
     float c = profileControl(key, 12u), d = profileControl(key, 13u);
-    float e = profileControl(key, 14u);
-    float low = min(min(a, b), min(min(c, d), e));
-    float high = max(max(a, b), max(max(c, d), e));
-    vec3 knots = vec3(0.15 + 0.20 * d, 0.40 + 0.20 * a, 0.65 + 0.20 * b);
+    float e = profileControl(key, 14u), f = profileControl(key, 15u);
+    float low = min(min(a, b), min(c, d));
+    float high = max(max(a, b), max(c, d));
+    if (count >= 5) { low = min(low, e); high = max(high, e); }
+    if (count == 6) { low = min(low, f); high = max(high, f); }
+    // Independent, bounded jitter keeps knots ordered without narrow spikes.
+    vec4 knots = (vec4(1, 2, 3, 4) + 0.8 * (vec4(profileControl(key, 30u),
+        profileControl(key, 31u), profileControl(key, 32u), profileControl(key, 33u)) - 0.5)) / float(count - 1);
     float timing;
     if (x < knots.x) timing = mix(a, b, smoothstep(0.0, knots.x, x));
     else if (x < knots.y) timing = mix(b, c, smoothstep(knots.x, knots.y, x));
+    else if (count == 4) timing = mix(c, d, smoothstep(knots.y, 1.0, x));
     else if (x < knots.z) timing = mix(c, d, smoothstep(knots.y, knots.z, x));
-    else timing = mix(d, e, smoothstep(knots.z, 1.0, x));
+    else if (count == 5) timing = mix(d, e, smoothstep(knots.z, 1.0, x));
+    else if (x < knots.w) timing = mix(d, e, smoothstep(knots.z, knots.w, x));
+    else timing = mix(e, f, smoothstep(knots.w, 1.0, x));
     timing = clamp((timing - low) / max(high - low, 0.0001), 0.0, 1.0);
     return vec2(mix(0.005, 0.14, timing), mix(0.61, 0.98, timing));
 }

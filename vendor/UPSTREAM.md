@@ -25,9 +25,11 @@ client buffers.
 
 `CloseSeed.hpp` generates a fresh seed once per close, independently of recycled
 window addresses. The seed stays fixed throughout the fadeout. `BurnProfile.hpp`
-mirrors the shader's five-control bottom-up profile with integer hashes and
+mirrors the shader's four/five/six-control bottom-up profiles with integer hashes and
 linear progress, allowing CPU/GPU agreement checks and comparison with the last
-eight closes on each workspace. Candidate selection and stored workspace history
+sixteen closes on each workspace. Point spacing uses separate hash channels
+from control values, preserving smooth joins and the existing height limits.
+Candidate selection and stored workspace history
 are bounded. Open and move shaders retain their existing per-window seeds.
 
 ## Main-window filter

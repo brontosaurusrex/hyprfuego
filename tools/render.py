@@ -257,21 +257,21 @@ def main():
         motion = np.array(motion)
         if motion_profiles:
             nearest_recent.append(min(float(np.sqrt(np.mean((motion - old) ** 2)))
-                for old in motion_profiles[-8:]))
+                for old in motion_profiles[-16:]))
         motion_profiles.append(motion)
     print("Distinct broad burn outlines:", len(profiles), "of", len(sample_seeds))
     distances = np.sqrt(np.mean((np.array(motion_profiles)[:, None, :]
         - np.array(motion_profiles)[None, :, :]) ** 2, axis=2))
     report = {"closes": len(sample_seeds), "distinct_midpoint_outlines": len(profiles),
         "near_pairs_rms_under_0.06": int(np.count_nonzero(np.triu(distances < 0.06, 1))),
-        "recent_eight_min_rms": min(nearest_recent) if nearest_recent else None,
-        "recent_eight_median_rms": statistics.median(nearest_recent) if nearest_recent else None}
+        "recent_sixteen_min_rms": min(nearest_recent) if nearest_recent else None,
+        "recent_sixteen_median_rms": statistics.median(nearest_recent) if nearest_recent else None}
     if args.profiles and nearest_recent:
         assert min(nearest_recent) > 0.01, "Native seed selection repeated recent rendered motion"
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "variety.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("Recent-eight motion distance: minimum", report["recent_eight_min_rms"],
-        "; median", report["recent_eight_median_rms"])
+    print("Recent-sixteen motion distance: minimum", report["recent_sixteen_min_rms"],
+        "; median", report["recent_sixteen_median_rms"])
     uniform("seed", 0.37)
 
     checker = Image.new("RGB", (W, H), (42, 46, 52))

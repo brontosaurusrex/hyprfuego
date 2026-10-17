@@ -8,6 +8,7 @@
 // addresses may be recycled, and time sampled per frame would make fire jump.
 class CloseSeedSequence {
   public:
+    static constexpr std::size_t HISTORY_SIZE = 16;
     explicit CloseSeedSequence(uint64_t initial) : m_state(initial) {}
     float next(int64_t workspace = 0) {
         // Cap remembered workspaces as well as candidate work per close.
@@ -31,7 +32,7 @@ class CloseSeedSequence {
             if (nearest >= 0.04f) break;
         }
         recent.push_back(bestShape);
-        if (recent.size() > 8) recent.pop_front();
+        if (recent.size() > HISTORY_SIZE) recent.pop_front();
         return static_cast<float>(best) / 16777216.0f;
     }
 

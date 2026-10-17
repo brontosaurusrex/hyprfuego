@@ -17,13 +17,20 @@
 
 Keep the active GLSL burn schedule synchronized with `BurnProfile.hpp` and the
 constant-size shader. The CPU compares broad shapes on a 9×7 grid at three phases
-against the last eight closes on the same workspace. It tries at most 64 seeds,
+against the last sixteen closes on the same workspace. It tries at most 64 seeds,
 accepting an RMS distance of 0.04 or choosing the most different candidate.
 This reduces recent repetition; it cannot guarantee that no two closes resemble
 each other. History resets when the plugin unloads.
 
 The broad burn outline blends halfway toward a uniform front, halving its
 vertical variation at every phase. Flame turbulence and spark count are unchanged.
+
+Candidate profiles use five control points about 60% of the time, with four and
+six points about 20% each. Interior positions use independent hash channels and
+bounded jitter around even spacing. The five-point positions retain their
+original ranges; all counts use the same smoothstep joins, normalized timing,
+height limits and linear progress. Native tests check the distribution, smooth
+joins, minimum spacing, monotonic advance and the sixteen-close history.
 
 ## Build and checks
 

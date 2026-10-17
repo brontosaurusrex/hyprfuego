@@ -19,15 +19,28 @@ inline float control(uint32_t key, uint32_t channel) {
     return static_cast<float>(hash(key ^ (channel * UINT32_C(0x9e3779b9))) >> 8) / 16777216.0f;
 }
 inline float clock(float progress) { return std::clamp(progress, 0.0f, 1.0f); }
+inline int pointCount(uint32_t key) {
+    const float choice = control(key, 20);
+    return choice < 0.20f ? 4 : (choice < 0.80f ? 5 : 6);
+}
+inline float pointPosition(int index, int count, uint32_t key) {
+    if (index == 0) return 0.0f;
+    if (index == count - 1) return 1.0f;
+    return (index + 0.8f * (control(key, 29 + index) - 0.5f)) / (count - 1);
+}
 inline float front(float x, float progress, uint32_t key) {
-    const float a = control(key, 10), b = control(key, 11), c = control(key, 12);
-    const float d = control(key, 13), e = control(key, 14);
-    const float low = std::min({a, b, c, d, e}), high = std::max({a, b, c, d, e});
-    const std::array<float, 5> positions{0.0f, 0.15f + 0.20f * d, 0.40f + 0.20f * a, 0.65f + 0.20f * b, 1.0f};
-    const std::array<float, 5> values{a, b, c, d, e};
+    const int count = pointCount(key);
+    std::array<float, 6> values{};
+    float low = 1.0f, high = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        values[i] = control(key, 10 + i);
+        low = std::min(low, values[i]);
+        high = std::max(high, values[i]);
+    }
     int index = 0;
-    while (index < 3 && x >= positions[index + 1]) ++index;
-    float blend = std::clamp((x - positions[index]) / (positions[index + 1] - positions[index]), 0.0f, 1.0f);
+    while (index < count - 2 && x >= pointPosition(index + 1, count, key)) ++index;
+    const float left = pointPosition(index, count, key), right = pointPosition(index + 1, count, key);
+    float blend = std::clamp((x - left) / (right - left), 0.0f, 1.0f);
     blend = blend * blend * (3.0f - 2.0f * blend);
     const float timing = std::clamp((values[index] + (values[index + 1] - values[index]) * blend - low)
                                   / std::max(high - low, 0.0001f), 0.0f, 1.0f);

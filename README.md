@@ -4,6 +4,11 @@ A Compiz-inspired burn animation for closing Hyprland windows, with turbulent
 flames, a charred edge, 48 drifting sparks and translucent smoke. Each close gets
 a fresh bottom-up burn shape. The default duration is **1.15 seconds**.
 
+Most shapes use five smooth control points, with occasional broader four-point
+and more detailed six-point shapes. Point spacing varies independently, and the
+selector avoids shapes similar to the last sixteen closes on the workspace.
+The smooth joins and existing height limits are preserved.
+
 ![Files window closing with Hyprfuego on a live desktop](docs/images/files-burn-desktop.png)
 
 [Animation](docs/images/burn-preview.gif) ·
