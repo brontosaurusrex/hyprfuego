@@ -8,6 +8,8 @@ out vec4 fragColor;
 uniform sampler2D tex;
 uniform float progress;
 uniform float seed;
+// Zero by default: the natural palette stays unchanged when theme colors are off.
+uniform vec4 theme_accent;
 uniform vec2 surface_size;
 uniform vec4 window_rect;
 
@@ -126,6 +128,11 @@ void main() {
         fireColor = mix(vec3(0.30, 0.06, 0.012), vec3(0.95, 0.43, 0.10), heat);
         float hot = heat * heat;
         fireColor = mix(fireColor, vec3(1.0, 0.91, 0.70), hot * hot * hot * 0.90);
+        if (theme_accent.a > 0.5) {
+            // Dark body, luminous accent, then a pale hot core for either theme mode.
+            fireColor = mix(theme_accent.rgb * 0.30, theme_accent.rgb * 0.95, heat);
+            fireColor = mix(fireColor, mix(vec3(1.0), theme_accent.rgb, 0.20), hot * hot * hot * 0.90);
+        }
     }
 
     // Smoke originates below its current position and drifts upward. A soft
@@ -183,6 +190,10 @@ void main() {
         float alpha = clamp(brightness, 0.0, 0.96) * src.a;
         vec3 color = mix(vec3(1.0, 0.46, 0.085), vec3(0.52, 0.075, 0.012), age01);
         color = mix(color, vec3(1.0, 0.86, 0.52), hotCore * (1.0 - age01) * 0.55);
+        if (theme_accent.a > 0.5) {
+            color = theme_accent.rgb * mix(1.0, 0.35, age01);
+            color = mix(color, mix(vec3(1.0), theme_accent.rgb, 0.20), hotCore * (1.0 - age01) * 0.55);
+        }
         sparks = over(vec4(color * alpha, alpha), sparks);
     }
     vec4 smoke = vec4(smokeColor * smokeAlpha, smokeAlpha);

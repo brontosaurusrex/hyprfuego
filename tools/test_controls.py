@@ -14,6 +14,31 @@ loader.exec_module(app)
 
 
 class Controls(unittest.TestCase):
+    def test_theme_colors_toggle_persists_without_touching_duration_or_desktop(self):
+        app.SETTINGS.parent.mkdir(parents=True)
+        app.SETTINGS.write_text('{"duration": 1.4}\n')
+        self.assertEqual(app.theme_colors_mode(), "off")
+        app.configure_theme_colors("on")
+        self.assertEqual(app.theme_colors_mode(), "on")
+        app.configure_theme_colors("toggle")
+        self.assertEqual(app.theme_colors_mode(), "off")
+        app.configure_theme_colors("toggle")
+        self.assertEqual(app.theme_colors_mode(), "on")
+        app.configure_theme_colors("off")
+        self.assertEqual(app.theme_colors_mode(), "off")
+        self.assertEqual(app.SETTINGS.read_text(), '{"duration": 1.4}\n')
+        self.assertEqual(self.main.read_text(), self.original)
+        app.ctl.assert_not_called()
+
+    def test_theme_colors_invalid_value_keeps_previous_setting(self):
+        app.configure_theme_colors("on")
+        with self.assertRaisesRegex(ValueError, "on, off, or toggle"):
+            app.configure_theme_colors("blue")
+        self.assertEqual(app.theme_colors_mode(), "on")
+        (app.SETTINGS.parent / "theme-colors").write_text("invalid")
+        with self.assertRaisesRegex(ValueError, "Expected on or off"):
+            app.theme_colors_mode()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

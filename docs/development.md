@@ -38,7 +38,7 @@ The native plugin requires the exact compositor/header commit documented in the
 `build/plugin.json` identifies the current binary and checksum. Do not delete the
 loaded binary or its manifest while the effect is enabled.
 
-The two native regressions can run without a compositor:
+The native regressions can run without a compositor:
 
 ```bash
 mkdir -p build/tests
@@ -46,6 +46,8 @@ g++ -std=c++17 -O2 tools/test_close_seed.cpp -o build/tests/test-close-seed
 build/tests/test-close-seed build/tests/profiles.txt > build/tests/seeds.txt
 g++ -std=c++17 -O2 tools/test_close_duration.cpp -o build/tests/test-close-duration
 build/tests/test-close-duration
+g++ -std=c++17 -O2 tools/test_theme_colors.cpp -o build/tests/test-theme-colors
+build/tests/test-theme-colors build/tests/theme-colors
 python3 tools/render.py --seeds build/tests/seeds.txt --profiles build/tests/profiles.txt --output build/tests/render
 ```
 
@@ -54,6 +56,11 @@ duration regression checks a five-to-one-second change with stale per-window
 values, unrelated shaders and animations already in progress. Rendering compares
 the CPU/GPU profiles across 128 closes and checks visibility and alpha invariants.
 Software-rendered checks do not replace a live desktop preview.
+
+The theme-color regression covers toggles, missing or invalid palettes, dark and
+neutral accent brightness, theme switches, and colors retained by active closes.
+The renderer checks blue, pink and neutral tints, unchanged alpha and geometry,
+and restoration of natural fire when the tint is disabled.
 
 ## Updating published previews
 
@@ -68,6 +75,7 @@ It copies these generated assets into `docs/images/`:
 - `burn-preview.gif`: one complete burn, followed by a pause.
 - `burn-contact-sheet.png`: six phases of that burn.
 - `burn-patterns.png`: the first 18 native-generated closes at 50% progress.
+- `burn-theme-colors.png`: blue, pink and neutral flame palettes at 50% progress.
 
 `manifest.json` records the renderer, default duration, seed and source/asset
 hashes. These synthetic previews contain no desktop captures. Scratch data,

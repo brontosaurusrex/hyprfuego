@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build/previews"
 IMAGES = ROOT / "docs/images"
-ASSETS = ("burn-preview.gif", "burn-contact-sheet.png", "burn-patterns.png")
+ASSETS = ("burn-preview.gif", "burn-contact-sheet.png", "burn-patterns.png", "burn-theme-colors.png")
 
 
 def run(*args, **kwargs):
@@ -37,6 +37,9 @@ def main():
         run(seed_test, OUTPUT / "profiles.txt", stdout=stream)
     run("g++", "-std=c++17", "-O2", "tools/test_close_duration.cpp", "-o", duration_test)
     run(duration_test)
+    theme_test = OUTPUT / "test-theme-colors"
+    run("g++", "-std=c++17", "-O2", "tools/test_theme_colors.cpp", "-o", theme_test)
+    run(theme_test, OUTPUT / "theme-test")
     for name in ("burn-close.glsl", "burn-close-size-preview.glsl"):
         run("glslangValidator", "-S", "frag", ROOT / "shaders" / name)
     environment = os.environ.copy()
@@ -51,7 +54,8 @@ def main():
     shutil.copyfile(OUTPUT / "variety.json", ROOT / "build/variety.json")
     report = json.loads((OUTPUT / "benchmark.json").read_text())
     sources = ("shaders/burn-close.glsl", "tools/render.py",
-        "vendor/HyprWindowShade/BurnProfile.hpp", "vendor/HyprWindowShade/CloseSeed.hpp")
+        "vendor/HyprWindowShade/BurnProfile.hpp", "vendor/HyprWindowShade/CloseSeed.hpp",
+        "vendor/HyprWindowShade/ThemeColors.hpp")
     duration = float(re.search(r"(?m)^// @duration\s+([0-9.]+)", (ROOT / sources[0]).read_text())[1])
     manifest = {"renderer": report["renderer"], "resolution": report["resolution"],
         "reference_seed": 0.37, "default_duration_seconds": duration,

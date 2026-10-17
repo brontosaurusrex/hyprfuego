@@ -1733,6 +1733,10 @@ Hyprutils::Memory::CWeakPointer<CShader> hkUseShader(CHyprOpenGLImpl* thisptr, H
             const CBox& r = g_pCurrentWindowRect;
             glUniform4f(activeEntry->windowRectLoc, (float)r.x, (float)r.y, (float)r.w, (float)r.h);
         }
+        if (activeEntry->themeAccentLoc >= 0) {
+            const auto accent = g_pCurrentFadeoutAnim ? g_pCurrentFadeoutAnim->themeAccent : ThemeColors::Accent{};
+            glUniform4f(activeEntry->themeAccentLoc, accent[0], accent[1], accent[2], accent[3]);
+        }
         if (activeEntry->seedLoc >= 0) {
             float s = g_pCurrentAnimSeed;
             if (s < 0.0f) {
@@ -1765,6 +1769,7 @@ static void tagFadeout(Desktop::IFadeout* key, const std::string& path, float du
     anim.start    = std::chrono::steady_clock::now();
     anim.duration = g_closeDurations.resolve(path, duration); // fixed at close creation
     anim.seed     = seeds.next(seedGroup);
+    anim.themeAccent = ThemeColors::current();
     anim.srcPos   = srcPos;
     anim.srcSize  = srcSize;
     g_mFadeoutAnims[key] = std::move(anim);

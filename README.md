@@ -85,6 +85,26 @@ Changes apply to future closes of existing and newly opened windows; a burn
 already underway keeps its original duration. Settings persist across logins and
 enable/disable cycles. Playback keeps the original linear progress curve.
 
+## Theme colors
+
+```bash
+./hyprfuego theme-colors on      # use the active Omarchy theme's accent
+./hyprfuego theme-colors off     # restore natural fire colors (default)
+./hyprfuego theme-colors toggle
+./hyprfuego theme-colors         # show the setting
+```
+
+Flames and sparks follow your theme's accent, with brightness adjusted for dark
+accents and pale hot cores. Theme switches apply on the next close; an animation
+already running keeps its colors. Missing or invalid palettes fall back to natural
+fire. The setting persists in `~/.config/hyprfuego/theme-colors` (or under
+`$XDG_CONFIG_HOME`). Palettes come from
+`~/.local/state/omarchy/current/theme/colors.toml` (or under `$XDG_STATE_HOME`).
+The plugin reads these files once per close, with no disk reads per frame.
+
+After updating from a version without theme colors, run `./hyprfuego reload` once.
+[Color examples](docs/images/burn-theme-colors.png)
+
 ## Window behavior
 
 Ordinary main windows burn, including independent windows from the same app.

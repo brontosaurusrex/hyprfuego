@@ -200,6 +200,29 @@ def main():
     assert visible_smoke > 100, "Smoke became too faint to see after the fire"
     assert warm_pixels > 20, "Sparks are missing throughout the animation"
 
+    # Theme colors must affect RGB alone: geometry, smoke alpha, timing and
+    # premultiplied bounds remain identical, and turning off restores every pixel.
+    themed_samples = []
+    if GL.glGetUniformLocation(program, "theme_accent") >= 0:
+        for label, accent in [("Blue accent", (122/247, 162/247, 1.0)),
+                              ("Pink accent", (1.0, 0.42, 0.68)),
+                              ("Neutral accent", (1.0, 1.0, 1.0))]:
+            for phase in (0.2, 0.5, 0.8):
+                uniform("theme_accent", 0, 0, 0, 0)
+                natural = render(phase)
+                uniform("theme_accent", *accent, 1)
+                themed = render(phase)
+                assert np.array_equal(themed[:, :, 3], natural[:, :, 3]), "Theming changed opacity or geometry"
+                assert np.all(themed[:, :, :3] <= themed[:, :, 3:4]), "Themed colors are not premultiplied"
+                if phase == 0.5:
+                    assert np.count_nonzero(themed[:, :, :3] != natural[:, :, :3]) > 100, "Themed fire did not change color"
+                    themed_samples.append((label, themed))
+            assert not render(1.0).any(), "Themed final frame is not transparent"
+            assert np.array_equal(render(0.0), data), "Theming changed the initial window"
+        uniform("theme_accent", 0, 0, 0, 0)
+        assert np.array_equal(render(0.5), frames[20]), "Disabling theming failed to restore natural fire"
+        print("PASS: themed fire changes only RGB; alpha, geometry, endpoints and off-state pixels are preserved")
+
     def spatial_profile(paper):
         return np.array([np.mean(cell) for row in np.array_split(paper, 7, axis=0)
             for cell in np.array_split(row, 9, axis=1)])
@@ -297,6 +320,19 @@ def main():
         sheet.paste(previews[index].resize((W//2, H//2)), (x, y+28))
         sd.text((x+12, y+6), f"progress {index/40:.0%}", fill="white")
     sheet.save(out / "burn-contact-sheet.png")
+    if themed_samples:
+        theme_sheet = Image.new("RGB", (W * 3 // 2, H // 2 + 28), (20, 23, 29))
+        td = ImageDraw.Draw(theme_sheet)
+        for i, (label, frame) in enumerate(themed_samples):
+            straight = frame.copy()
+            alpha = frame[:, :, 3:4].astype(np.float32)
+            straight[:, :, :3] = np.clip(frame[:, :, :3].astype(np.float32)
+                * 255.0 / np.maximum(alpha, 1.0), 0, 255).astype(np.uint8)
+            composed = checker.copy().convert("RGBA")
+            composed.alpha_composite(Image.fromarray(straight))
+            theme_sheet.paste(composed.convert("RGB").resize((W//2, H//2)), (i * W//2, 28))
+            td.text((i * W//2 + 12, 6), label, fill="white")
+        theme_sheet.save(out / "burn-theme-colors.png")
     print("PASS: exact endpoints, transparency bounds, premultiplied alpha,")
     print("      bottom-up ignition, original timing, decreasing opaque area, smoke and sparks.")
     print("Preview:", out / "burn-preview.gif")

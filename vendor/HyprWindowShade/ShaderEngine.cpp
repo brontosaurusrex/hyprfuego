@@ -302,6 +302,7 @@ CompiledShader* getOrCompileShader(const std::string& shaderPath) {
     entry.isFullscreenLoc = glGetUniformLocation(prog, "is_fullscreen");
     entry.progressLoc     = glGetUniformLocation(prog, "progress");
     entry.seedLoc         = glGetUniformLocation(prog, "seed");
+    entry.themeAccentLoc  = glGetUniformLocation(prog, "theme_accent");
     entry.boxSizeLoc      = glGetUniformLocation(prog, "plugin_box_size");
     entry.roundLoc        = glGetUniformLocation(prog, "plugin_round");
     entry.roundPowerLoc   = glGetUniformLocation(prog, "plugin_round_power");

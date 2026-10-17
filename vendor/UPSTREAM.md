@@ -42,6 +42,14 @@ protocol's hints have no effect without a parent toplevel. This keeps normal GTK
 main windows, including Files, eligible. Independent windows are not classified
 by PID or window size. Apps must report their relationships correctly.
 
+## Optional theme colors
+
+`ThemeColors.hpp` reads the user-controlled `hyprfuego/theme-colors` setting and
+Omarchy's active accent once in `tagFadeout()`. Its brightness-normalized tint
+is retained in the fadeout and uploaded through the cached `theme_accent`
+uniform. Theme switches and toggles affect the next close, with no per-frame
+filesystem work. Zero is the default uniform, preserving natural fire when off.
+
 ## Runtime duration
 
 `CloseDurations.hpp` stores per-shader preferences exposed through the Lua

@@ -53,6 +53,26 @@ def duration_seconds():
     return validate_duration(match[1] if match else 1.15)
 
 
+def theme_colors_mode():
+    path = SETTINGS.parent / "theme-colors"
+    mode = path.read_text().strip() if path.exists() else "off"
+    if mode not in {"on", "off"}:
+        raise ValueError(f"Expected on or off in {path}")
+    return mode
+
+
+def configure_theme_colors(value=None):
+    if value is None:
+        print(f"Theme colors: {theme_colors_mode()}")
+        return
+    if value not in {"on", "off", "toggle"}:
+        raise ValueError("Theme colors must be on, off, or toggle.")
+    mode = ("off" if theme_colors_mode() == "on" else "on") if value == "toggle" else value
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(SETTINGS.parent / "theme-colors", mode + "\n")
+    print(f"Theme colors: {mode} (applies to the next close)")
+
+
 def apply_duration():
     seconds = duration_seconds()
     script = ["assert(hl.plugin.HyprWindowShade.closeduration, 'Run ./hyprfuego reload to update the duration API')"]
@@ -375,16 +395,18 @@ def disable():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load", "duration"])
-    parser.add_argument("seconds", nargs="?", help="With duration: seconds (0.1–5), or default")
+    parser.add_argument("command", choices=["build", "check", "preview", "enable", "disable", "reload", "status", "session-load", "duration", "theme-colors"])
+    parser.add_argument("seconds", nargs="?", help="With duration: seconds (0.1–5) or default; with theme-colors: on, off, or toggle")
     parser.add_argument("--size-test", action="store_true", help="Preview constant-size flames on a large and a small window")
     args = parser.parse_args()
     if args.size_test and args.command != "preview":
         parser.error("--size-test is only available with preview")
-    if args.seconds is not None and args.command != "duration":
-        parser.error("A duration value is only available with the duration command")
+    if args.seconds is not None and args.command not in {"duration", "theme-colors"}:
+        parser.error("A value is only available with the duration or theme-colors command")
     if args.command == "duration":
         configure_duration(args.seconds)
+    elif args.command == "theme-colors":
+        configure_theme_colors(args.seconds)
     elif args.command == "build":
         build()
     elif args.command == "check":
@@ -404,6 +426,7 @@ def main():
         print("Configured:", START in MAIN.read_text())
         print("Plugin loaded:", loaded())
         print(f"Duration: {duration_seconds():g} seconds")
+        print(f"Theme colors: {theme_colors_mode()}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 #pragma once
 #include "CloseDurations.hpp"
+#include "ThemeColors.hpp"
 
 // 1. ABSOLUTE FIRST: Include native GLES3.
 #include <GLES3/gl32.h>
@@ -197,6 +198,7 @@ struct FadeoutAnim {
     std::chrono::steady_clock::time_point start;
     float                                 duration = -1.0f; // <0: ask the shader
     float                                 seed     = 0.5f;  // fresh per close, retained through the fadeout
+    ThemeColors::Accent                   themeAccent{}; // sampled once, never read from disk per frame
     // Where the closing view sat on its monitor, in monitor-local device pixels.
     // The snapshot framebuffer covers the whole monitor, so this is the only way
     // a close shader can find the thing it is animating. Captured at fadeout
@@ -370,6 +372,7 @@ struct CompiledShader {
     GLint     isFullscreenLoc = -1; // float 0/1
     GLint     progressLoc     = -1; // float 0..1 across a one-shot open/close animation
     GLint     seedLoc         = -1; // float 0..1, stable per window, so instances differ
+    GLint     themeAccentLoc  = -1; // vec4: luminous accent RGB and on/off flag
     // --- TRANSFORM (move/resize) ---
     // Populated for any shader that declares them, not just a `shader_move:`
     // stage: a permanent shader is free to react to the window being dragged
