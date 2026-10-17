@@ -62,6 +62,15 @@ neutral accent brightness, theme switches, and colors retained by active closes.
 The renderer checks blue, pink and neutral tints, unchanged alpha and geometry,
 and restoration of natural fire when the tint is disabled.
 
+Use `python3 tools/render.py --duration 1 --output build/speed-scaling/1s`
+to validate and preview a selected duration. Flame and smoke turbulence use
+`4 / duration` times the original progress-based clock in both active shader
+variants. This is linear in wipe speed, with the original appearance retained
+at four seconds. Spark trajectories and the burn schedule keep their clocks.
+The plugin supplies each close's captured duration to its animation stage,
+including intermediate framebuffer rendering, so changing the setting does not
+change an animation already in progress. Native changes require a reload.
+
 ## Updating published previews
 
 ```bash

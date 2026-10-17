@@ -1700,8 +1700,13 @@ Hyprutils::Memory::CWeakPointer<CShader> hkUseShader(CHyprOpenGLImpl* thisptr, H
             glUniform1f(activeEntry->curveLoc,
                         (g_pCurrentMotion && (g_pCurrentMotion->moving || g_pCurrentMotion->resizing)) ? g_pCurrentMotion->curve : 1.0f);
         }
-        if (activeEntry->durationLoc >= 0)
-            glUniform1f(activeEntry->durationLoc, g_pCurrentMotion ? g_pCurrentMotion->duration : -1.0f);
+        if (activeEntry->durationLoc >= 0) {
+            // A close snapshot has no motion record. Use its captured duration
+            // only for the animation stage, including the offscreen path.
+            const float duration = g_pCurrentFadeoutAnim && g_pCurrentAnimProgress >= 0.0f
+                ? g_pCurrentFadeoutAnim->duration : (g_pCurrentMotion ? g_pCurrentMotion->duration : -1.0f);
+            glUniform1f(activeEntry->durationLoc, duration);
+        }
         if (activeEntry->settleLoc >= 0) {
             // 0 outside a tail, so `settle` reads as "not settling" rather than
             // as a completed one.

@@ -7,6 +7,7 @@ in vec2 v_texcoord;
 out vec4 fragColor;
 uniform sampler2D tex;
 uniform float progress;
+uniform float duration;
 uniform float seed;
 // Zero by default: the natural palette stays unchanged when theme colors are off.
 uniform vec4 theme_accent;
@@ -84,7 +85,10 @@ void main() {
     vec2 physical = pos / effectScale;
     float variant = seed * 23.71;
     highp uint profileKey = uint(seed * 16777216.0);
-    float t = p * 3.8;
+    // Linear in wipe speed (1 / seconds): 4s = 1x, 2s = 2x, 1s = 4x.
+    // Keep the old motion if an older plugin does not supply a duration.
+    float flameRate = duration > 0.0 ? 4.0 / duration : 1.0;
+    float t = p * 3.8 * flameRate;
     // Reuse this column's existing schedule: shorter burn time means taller fire.
     vec2 localSchedule = burnSchedule(uv.x, profileKey);
     float front = advanceFront(localSchedule, p);
