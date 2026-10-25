@@ -100,6 +100,48 @@ The accepted profile uses 48 sparks and the original three-octave turbulence.
 It retains early lifetime rejection, spark halo culling and flame/smoke envelope
 checks. These changes reduce work while retaining the selected visual settings.
 
+The 2026-10-25 noise-skipping pass delays the four flame-height noise samples
+until a pixel enters the flame envelope. It also skips contour noise below
+`-0.68` window-height units relative to the front: the maximum contour displacement
+is `0.0275`, so paper, flame and smoke are already invisible there. Sparks still
+run in those regions. Both shader size variants use the same bounds, scaled for
+the constant-size experiment. Spark count, turbulence, profiles and timing are
+preserved.
+
+The relevant lesson from Physical is to measure rendering under real load and
+avoid work that cannot affect the displayed frame. Physical's frame-submission
+clock does not transfer directly: Hyprfuego already samples elapsed steady-clock
+time when Hyprland draws and damages the output throughout the close.
+
+Paired Intel HD 520 measurements against the `before-optimizations` checkpoint
+(`497f0cc`) used one EGL context, three seeds, eight phases and 144 warmed draws
+per version, alternating draw order:
+
+| Target / window | Before median / p95 | After median / p95 |
+| --- | --- | --- |
+| 800×550 / 560×390 | 3.65 / 6.54 ms | 3.52 / 6.08 ms |
+| 1920×1080 / 1344×765 | 25.84 / 36.29 ms | 25.40 / 35.18 ms |
+
+These final runs saved about 4% and 2% in median draw time. Earlier paired
+large-target runs saved up to 7%; desktop load and GPU clocks varied during the
+session. This is a modest shader-cost improvement, not a measured increase in
+presented desktop FPS. Timings include CPU submission and synchronous GPU
+completion, excluding compilation and readback. Sampled pixel comparisons across
+24 frames changed only 3 and 7 channels respectively, by at most one 8-bit level.
+Raw samples and shader hashes are in the
+[small-target report](benchmarks/intel-hd520-noise-skipping-small.json) and
+[large-target report](benchmarks/intel-hd520-noise-skipping-large.json).
+
+Reproduce the paired comparison without changing the active shader:
+
+```bash
+mkdir -p build/optimizations
+git show before-optimizations:shaders/burn-close.glsl > build/optimizations/before.glsl
+LIBGL_ALWAYS_SOFTWARE=0 python3 tools/render.py --benchmark-only \
+  --compare-shader build/optimizations/before.glsl --benchmark-size 1920 1080 \
+  --output build/optimizations/comparison
+```
+
 The smooth-profile variety change was measured on an Intel HD 520 with 24 warmed
 800×550 draws per version:
 

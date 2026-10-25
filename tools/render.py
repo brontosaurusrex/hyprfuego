@@ -30,15 +30,23 @@ def shader(kind, source):
 
 
 def main():
+    global W, H
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shader", type=Path, default=ROOT / "shaders/burn-close.glsl")
     parser.add_argument("--output", type=Path, default=ROOT / "build")
     parser.add_argument("--benchmark", action="store_true", help="Measure warmed, synchronous shader draws on this EGL renderer")
     parser.add_argument("--benchmark-only", action="store_true", help="Warm and time draws without running validation or generating previews")
+    parser.add_argument("--compare-shader", type=Path, help="Alternate benchmark draws with this reference shader and compare sampled pixels")
+    parser.add_argument("--benchmark-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=(800, 550), help="Pbuffer size for --benchmark-only; the window covers about half its pixels")
     parser.add_argument("--save-frames", action="store_true", help="Save raw premultiplied frames for before/after comparisons")
     parser.add_argument("--seeds", type=Path, help="Validate additional per-close seeds, one number per line")
     parser.add_argument("--profiles", type=Path, help="Compare native CPU profiles with the actual GLSL controls")
     args = parser.parse_args()
+    if (args.compare_shader or tuple(args.benchmark_size) != (800, 550)) and not args.benchmark_only:
+        parser.error("--compare-shader and custom --benchmark-size require --benchmark-only")
+    W, H = args.benchmark_size
+    if not (64 <= W <= 8192 and 64 <= H <= 8192):
+        parser.error("Benchmark dimensions must be between 64 and 8192")
     display = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
     major, minor = ctypes.c_int(), ctypes.c_int()
     EGL.eglInitialize(display, major, minor)
@@ -91,7 +99,7 @@ def main():
     uniform("seed", 0.37)
     source = Image.new("RGBA", (W, H))
     draw = ImageDraw.Draw(source)
-    box = (120, 80, 680, 470)
+    box = (W * 120 // 800, H * 80 // 550, W * 680 // 800, H * 470 // 550)
     draw.rounded_rectangle(box, radius=16, fill=(24, 29, 38, 255))
     draw.text((150, 105), "HYPRFUEGO   /   burn on close", fill=(240, 230, 200, 255), font_size=22)
     draw.line((145, 148, 655, 148), fill=(62, 70, 83, 255), width=2)
@@ -100,7 +108,8 @@ def main():
         draw.text((150, 177 + y * 30), text, fill=(190, 215, 190, 255), font_size=17)
     data = np.asarray(source)
     GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, W, H, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, data)
-    uniform("window_rect", 120/W, 80/H, 560/W, 390/H)
+    window_rect = (box[0]/W, box[1]/H, (box[2]-box[0])/W, (box[3]-box[1])/H)
+    uniform("window_rect", *window_rect)
 
     def render(p):
         uniform("progress", p)
@@ -134,6 +143,72 @@ def main():
         EGL.eglDestroySurface(display, surface)
         EGL.eglDestroyContext(display, ctx)
         EGL.eglTerminate(display)
+
+    if args.compare_shader:
+        # Keep both programs in the same context. Alternate order so GPU clocks
+        # and desktop activity do not consistently favour either version. Finish
+        # measures submission plus GPU completion, never image download.
+        reference = GL.glCreateProgram()
+        GL.glAttachShader(reference, vertex)
+        GL.glAttachShader(reference, shader(GL.GL_FRAGMENT_SHADER, args.compare_shader.read_text()))
+        GL.glLinkProgram(reference)
+        if not GL.glGetProgramiv(reference, GL.GL_LINK_STATUS):
+            raise RuntimeError(GL.glGetProgramInfoLog(reference).decode())
+        programs = (reference, program)
+        phases = (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85)
+        seeds = (0.37, 0.12345, 0.81479)
+        for program in programs:
+            GL.glUseProgram(program)
+            GL.glUniform1i(GL.glGetUniformLocation(program, "tex"), 0)
+            uniform("surface_size", W, H)
+            uniform("window_rect", *window_rect)
+            uniform("seed", seeds[0])
+            for phase in phases * 3:
+                uniform("progress", phase)
+                GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+            GL.glFinish()
+        samples = ([], [])
+        max_difference = changed_channels = compared_channels = 0
+        for sample_seed in seeds:
+            for repeat in range(6):
+                for phase in phases:
+                    frames = {}
+                    for index in ((0, 1) if repeat % 2 == 0 else (1, 0)):
+                        program = programs[index]
+                        GL.glUseProgram(program)
+                        uniform("seed", sample_seed)
+                        uniform("progress", phase)
+                        GL.glFinish()
+                        start = time.perf_counter()
+                        GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+                        GL.glFinish()
+                        samples[index].append((time.perf_counter() - start) * 1000)
+                        if repeat == 0:
+                            raw = GL.glReadPixels(0, 0, W, H, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE)
+                            frames[index] = np.frombuffer(raw, np.uint8).astype(np.int16)
+                    if frames:
+                        difference = np.abs(frames[0] - frames[1])
+                        max_difference = max(max_difference, int(difference.max()))
+                        changed_channels += int(np.count_nonzero(difference))
+                        compared_channels += difference.size
+        variants = []
+        for path, timings in zip((args.compare_shader, args.shader), samples):
+            variants.append({"shader": str(path),
+                "shader_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "draws": len(timings), "median_ms": statistics.median(timings),
+                "p95_ms": float(np.percentile(timings, 95)), "samples_ms": timings})
+            print(f"{path}: median {variants[-1]['median_ms']:.2f} ms; p95 {variants[-1]['p95_ms']:.2f} ms")
+        report = {"renderer": GL.glGetString(GL.GL_RENDERER).decode(),
+            "resolution": [W, H], "window_pixels": [box[2]-box[0], box[3]-box[1]],
+            "method": "Alternating synchronous draws; compilation and readback excluded",
+            "seeds": seeds, "phases": phases, "variants": variants,
+            "max_channel_difference": max_difference, "changed_channels": changed_channels,
+            "compared_channels": compared_channels}
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "comparison.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(f"Pixel comparison: maximum difference {max_difference}; {changed_channels}/{compared_channels} channels changed")
+        close_context()
+        return
 
     if args.benchmark_only:
         for phase in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85) * 2:

@@ -132,6 +132,8 @@ The effect stays within the snapshot's original alpha, so flames and smoke do
 not spill onto unrelated desktop areas. It uses three-octave turbulence and 48
 procedural sparks. Inactive sparks are rejected before calculating their
 geometry, and pixels outside visible effect envelopes skip expensive shading.
+Fully burned regions also skip contour and flame-height noise when it cannot
+affect the output; sparks continue to animate there.
 
 The flame palette concentrates pale highlights at the hot base, with softer amber
 bodies and faint tips. Broad upward flow has more weight than fine turbulence;

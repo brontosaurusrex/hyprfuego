@@ -100,8 +100,14 @@ void main() {
     float fastBurn = clamp((0.84 - (localSchedule.y - localSchedule.x)) / 0.235, 0.0, 1.0);
     float flameScale = mix(0.65, 2.15, fastBurn * fastBurn);
     // A stationary irregular contour burns monotonically; the gas moves freely.
-    float contour = fbm(vec2(pos.x * 14.0 + variant, pos.y * 9.0));
-    float edge = (pos.y - front) + (contour - 0.5) * 0.055;
+    float edge = pos.y - front;
+    // Contour displacement is at most 0.0275 height units. Below -0.68,
+    // paper, fire and smoke are all zero even with that displacement.
+    // Sparks still run below; only invisible contour noise is skipped.
+    if (edge > -0.68) {
+        float contour = fbm(vec2(pos.x * 14.0 + variant, pos.y * 9.0));
+        edge += (contour - 0.5) * 0.055;
+    }
     float remain = smoothstep(-0.004, 0.007, edge);
     float alive = smoothstep(0.0, 0.065, p) * (1.0 - smoothstep(0.84, 1.0, p));
 
@@ -111,36 +117,39 @@ void main() {
     paper.rgb = mix(paper.rgb, vec3(0.018, 0.009, 0.004) * paper.a, charred * 0.94);
 
     // Broad, coherent tongues rise quickly; thin tips fade into the air.
-    float plume = pow(noise(vec2(uv.x * 4.0, variant + 41.5)), 3.0);
-    float height = 0.045 + 0.09 * fbm(vec2(pos.x * 9.0 + variant, -t * 1.4))
-                 + 0.30 * plume;
-    // Quiet patches stay low; fast patches produce taller, localized tongues.
-    height *= flameScale;
-    float h = max(edge, 0.0) / height;
     float flameAlpha = 0.0;
     vec3 fireColor = vec3(0);
     // Outside the visible envelope only a tiny core tail remains: below
     // 2e-7 at -0.12 height units, and below 1e-14 at +0.25. Skip
     // two turbulence fields there; reuse the remaining fade for heat colour.
-    if (edge > -0.12 && (h < 1.45 || edge < 0.25)) {
-        float warp = fbm(vec2(pos.x * 6.5 + variant, pos.y * 3.5 - t * 2.0));
-        vec2 gas = vec2(pos.x * 20.0 + variant + (warp - 0.5) * 1.3,
-                        pos.y * 5.5 - t * 4.2);
-        float detail = fbm(gas);
-        float body = smoothstep(0.20 + h * 0.48, 0.65 + h * 0.32, detail);
-        float falloff = exp(-h * 1.9);
-        flameAlpha = body * falloff
-            * smoothstep(-0.025, 0.012, edge) * (1.0 - smoothstep(0.45, 1.45, h)) * alive;
-        float core = exp(-abs(edge) * 130.0) * smoothstep(0.28, 0.72, detail) * alive;
-        flameAlpha = clamp(flameAlpha * 0.80 + core * 0.70, 0.0, 0.92) * src.a;
-        float heat = clamp(body * 0.45 + falloff * falloff * 0.55, 0.0, 1.0);
-        fireColor = mix(vec3(0.30, 0.06, 0.012), vec3(0.95, 0.43, 0.10), heat);
-        float hot = heat * heat;
-        fireColor = mix(fireColor, vec3(1.0, 0.91, 0.70), hot * hot * hot * 0.90);
-        if (theme_accent.a > 0.5) {
-            // Dark body, luminous accent, then a pale hot core for either theme mode.
-            fireColor = mix(theme_accent.rgb * 0.30, theme_accent.rgb * 0.95, heat);
-            fireColor = mix(fireColor, mix(vec3(1.0), theme_accent.rgb, 0.20), hot * hot * hot * 0.90);
+    if (edge > -0.12) {
+        // Height needs four noise samples; burned pixels need none.
+        float plume = pow(noise(vec2(uv.x * 4.0, variant + 41.5)), 3.0);
+        float height = 0.045 + 0.09 * fbm(vec2(pos.x * 9.0 + variant, -t * 1.4))
+                     + 0.30 * plume;
+        // Quiet patches stay low; fast patches produce taller, localized tongues.
+        height *= flameScale;
+        float h = max(edge, 0.0) / height;
+        if (h < 1.45 || edge < 0.25) {
+            float warp = fbm(vec2(pos.x * 6.5 + variant, pos.y * 3.5 - t * 2.0));
+            vec2 gas = vec2(pos.x * 20.0 + variant + (warp - 0.5) * 1.3,
+                            pos.y * 5.5 - t * 4.2);
+            float detail = fbm(gas);
+            float body = smoothstep(0.20 + h * 0.48, 0.65 + h * 0.32, detail);
+            float falloff = exp(-h * 1.9);
+            flameAlpha = body * falloff
+                * smoothstep(-0.025, 0.012, edge) * (1.0 - smoothstep(0.45, 1.45, h)) * alive;
+            float core = exp(-abs(edge) * 130.0) * smoothstep(0.28, 0.72, detail) * alive;
+            flameAlpha = clamp(flameAlpha * 0.80 + core * 0.70, 0.0, 0.92) * src.a;
+            float heat = clamp(body * 0.45 + falloff * falloff * 0.55, 0.0, 1.0);
+            fireColor = mix(vec3(0.30, 0.06, 0.012), vec3(0.95, 0.43, 0.10), heat);
+            float hot = heat * heat;
+            fireColor = mix(fireColor, vec3(1.0, 0.91, 0.70), hot * hot * hot * 0.90);
+            if (theme_accent.a > 0.5) {
+                // Dark body, luminous accent, then a pale hot core for either theme mode.
+                fireColor = mix(theme_accent.rgb * 0.30, theme_accent.rgb * 0.95, heat);
+                fireColor = mix(fireColor, mix(vec3(1.0), theme_accent.rgb, 0.20), hot * hot * hot * 0.90);
+            }
         }
     }
 

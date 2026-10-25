@@ -8,9 +8,9 @@
   "default_duration_seconds": 1.15,
   "validated_closes": 128,
   "sources": {
-    "shaders/burn-close.glsl": "a7b4809da4b338da2473ff0a3b9255762fae8d56226e2e62014df4ccc6f402c7",
-    "shaders/burn-close-size-preview.glsl": "a351318bef5305015f4d3a4fe58cf9699c18447f105bfd1faccae09840c8d398",
-    "tools/render.py": "cb62e68cbf5bf09e6b19fec30facfb19fbb6085fd1ae75801d40aa79fd21645a",
+    "shaders/burn-close.glsl": "ec940c3ffc5bf591670fcf0c8926e1eb7b366437300878198996535d65ef9276",
+    "shaders/burn-close-size-preview.glsl": "487cea32fa0d7b1523c3d39e8601e7e49312c422d95b1a71c58852df6fd3e6f7",
+    "tools/render.py": "78cab85aaa8740e6be0a991bc1c647eb551f054e172261a3065518a92e680461",
     "tools/update_previews.py": "d89f7a666998feda8123865db5cd6b72bc0cf6ce712a8ef3bdf4f26bbb422372",
     "tools/test_close_seed.cpp": "d3d205037ea026605211eb006b2eea6b2abace2fb98bd77a43accd4b453cf8b2",
     "vendor/HyprWindowShade/BurnProfile.hpp": "b32fa05d224962db7f730534ee2ba5f9ed6097939c0240b10725989798271a7f",
@@ -18,7 +18,7 @@
     "vendor/HyprWindowShade/ThemeColors.hpp": "4c4b6af3894c944980278b87cbf1b4b4acc4b6de251c7f8cba6bcd51a47033b2"
   },
   "assets": {
-    "burn-preview.gif": "6fe47acfb43eb435944d4e3f8b6c4d65f3527e7f44c269233965dc80eb01defd",
+    "burn-preview.gif": "49696ae96060e38f27c24bd6ef6e13ffa97daee3ced1d803c9ae7978c5caab71",
     "burn-contact-sheet.png": "702e3d170ec6dcde56a379c16a8c3b1ea6884247f2f1b8f9421eec9b15d4b753",
     "burn-patterns.png": "14af76ec020930a5e2387754f44de7913b8ea10bf2bdc0412c4100c62b9b6226",
     "burn-theme-colors.png": "257062f3145e6cd0e09593e17a7d7b252527ce7f6791f95ec03ce4a583d786b4"
