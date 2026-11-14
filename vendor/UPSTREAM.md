@@ -66,3 +66,11 @@ stable, preventing stale `@5` values from overriding a new one-second preference
 
 All native patches require rebuilding and reloading the plugin. GLSL edits alone
 reload automatically. See [development and validation](../docs/development.md).
+
+## Offscreen clipping
+
+Intermediate shader stages use the full target framebuffer for their damage
+region. The blit box still uses the monitor's projection space; its clipping
+rectangle is in framebuffer pixels. This preserves all rows and columns when
+a HiDPI client buffer exceeds the monitor dimensions, including Sublime Text
+at fractional output scales. It adds no rendering pass or allocation.

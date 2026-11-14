@@ -1109,7 +1109,11 @@ static SP<Render::ITexture> runIntermediateStages(CompiledShader* const* stages,
 
     R.renderModif = {};
     R.clipBox     = {};
-    R.damage      = CRegion(0.0, 0.0, projSpace.x, projSpace.y);
+    // Damage becomes a GL scissor in target pixels, independently of the
+    // monitor-space projection used for the blit box below. HiDPI clients can
+    // attach buffers larger than the monitor (e.g. a 2x buffer on a 1.6x
+    // output); using projSpace here left the excess rows/columns undrawn.
+    R.damage      = CRegion(0.0, 0.0, w, h);
     // A surface drawn from a sub-rect of its buffer must not have that crop
     // applied twice — the intermediate pass copies the whole texture, and the
     // final on-screen draw re-applies the real UVs to the result.
