@@ -1,5 +1,6 @@
 #pragma once
 #include "CloseDurations.hpp"
+#include "LayerFilter.hpp"
 #include "ThemeColors.hpp"
 
 // 1. ABSOLUTE FIRST: Include native GLES3.
@@ -440,6 +441,7 @@ struct CompiledShader {
 // catch-all with, and no client would pick this as a real namespace.
 inline constexpr const char* LAYER_CATCH_ALL = "*";
 
+extern LayerFilter g_layerFilter;
 extern std::map<std::string, std::string>          g_mLayerNamespaceShaderMap;
 extern std::map<std::string, std::string>          g_mWindowClassShaderMap;
 

@@ -103,6 +103,7 @@ static const std::string* resolveShaderPath(const PHLWINDOW& pWindow, const PHLL
     }
 
     if (pLS) {
+        if (const auto* filter=g_layerFilter.forNamespace(pLS->m_namespace)) return filter;
         if (const std::string* p = lookupLayerEntry(g_mLayerNamespaceShaderMap, pLS->m_namespace))
             return p;
     }
@@ -982,6 +983,10 @@ static int collectBaseLayers(const PHLWINDOW& pWindow, const PHLLS& pLS, const s
             if (auto it = g_mLayerNamespaceShaderMap.find(pLS->m_namespace); it != g_mLayerNamespaceShaderMap.end())
                 out[n++] = &it->second;
         }
+        // The color filter follows user shaders and precedes the animation.
+        // Resolve at draw time, including a layer's very first frame and popups
+        // inheriting its namespace; no map-event discovery or extra stage per menu.
+        if (const auto* filter=g_layerFilter.forNamespace(pLS->m_namespace))out[n++]=filter;
     }
 
     return n;

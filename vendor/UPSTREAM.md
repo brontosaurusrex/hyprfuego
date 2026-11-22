@@ -9,6 +9,21 @@ The source is included for reproducible offline builds. The shader, manager and
 local patches below are Hyprfuego additions. Upstream documentation remains in
 [HyprWindowShade/README.md](HyprWindowShade/README.md).
 
+## Native layer color filter
+
+`hl.plugin.HyprWindowShade.layerfilter(path, excludedNamespaces)` sets one final
+color shader for desktop layers. `LayerFilter.hpp` resolves exact namespaces at
+draw time, including previously unseen layers and layer-owned popups. Exclusions
+are an optional array of up to 64 names. An empty path, `clear` or `none` disables
+the filter. Invalid arguments leave the previous policy intact. Updating the
+policy damages monitors immediately; unloading clears it.
+
+`Hooks.cpp` appends this shader after existing catchall/namespace shaders and
+before animation shaders. Existing layer shader maps and their stacking semantics
+are unchanged. This replaces ColorCorrectTheme's delayed namespace discovery;
+it does not add a second correction pass. The policy test is
+`tools/test_layer_filter.cpp`.
+
 ## Snapshot preservation
 
 `EarlySnapshot.cpp` hooks an explicit null-buffer attach on a mapped main window

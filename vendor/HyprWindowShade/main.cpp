@@ -3,6 +3,9 @@
 // Hyprland (v0.56) links liblua.so.5.5 and /usr/include/lua.h is 5.5; symbols
 // resolve from the host process at dlopen, so we don't link -llua ourselves.
 #include <lua.hpp>
+#include <cstring>
+#include <cstdio>
+#include <stdexcept>
 
 // --- DEFINE EXTERN VARIABLES ---
 HANDLE                                                PHANDLE = nullptr;
@@ -10,6 +13,7 @@ CloseDurations                                        g_closeDurations;
 std::vector<CHyprSignalListener>                      g_Listeners;
 std::unordered_map<Desktop::View::CWindow*, std::string>        g_mWindowManualShaders;
 std::unordered_map<Desktop::View::CWindow*, WindowShaderState>  g_mWindowRuleShaders;
+LayerFilter g_layerFilter;
 std::map<std::string, std::string>                    g_mLayerNamespaceShaderMap;
 std::map<std::string, std::string>                    g_mWindowClassShaderMap;
 std::map<std::string, CompiledShader>                 g_mCompiledCShaders;
@@ -166,6 +170,33 @@ namespace shadeActions {
 // configs can bind keys like: function() hl.plugin.HyprWindowShade.<name>(...) end
 // (Native Hyprland dispatchers from plugins aren't surfaced to the Lua config
 // layer, per vaxry — Lua functions are the supported workaround.)
+static int luaLayerFilter(lua_State* L) {
+    char failure[256] = {};
+    try {
+        LayerFilter next;
+        if (lua_type(L,1)!=LUA_TSTRING) throw std::runtime_error("layerfilter needs a shader path");
+        size_t length=0;const char* path=lua_tolstring(L,1,&length);
+        if(length>4096 || std::memchr(path,0,length))throw std::runtime_error("Invalid filter path");
+        next.path.assign(path,length);
+        if(next.path=="clear" || next.path=="none")next.path.clear();
+        if(!lua_isnoneornil(L,2)) {
+            if(!lua_istable(L,2) || lua_rawlen(L,2)>64)throw std::runtime_error("Invalid layer exclusions");
+            for(size_t i=1;i<=lua_rawlen(L,2);i++) {
+                lua_rawgeti(L,2,i);
+                if(lua_type(L,-1)!=LUA_TSTRING)throw std::runtime_error("Invalid layer namespace");
+                const char* name=lua_tolstring(L,-1,&length);
+                if(!length || length>200 || std::memchr(name,0,length))throw std::runtime_error("Invalid layer namespace");
+                next.excluded.emplace(name,length);lua_pop(L,1);
+            }
+        }
+        if(next.path.empty())next.clear();
+        g_layerFilter=std::move(next);
+        for(const auto& monitor:State::monitorState()->monitors())if(monitor)g_pHyprRenderer->damageMonitor(monitor);
+        return 0;
+    } catch(const std::exception& error) {std::snprintf(failure,sizeof(failure),"%s",error.what());}
+    // Lua errors longjmp: leave the C++ catch before raising one.
+    return luaL_error(L,"%s",failure);
+}
 static int luaLayerShader(lua_State* L) {
     shadeActions::setLayerShader(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
     return 0;
@@ -550,6 +581,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // --- LUA FUNCTIONS (hl.plugin.HyprWindowShade.* — for Lua-based configs) ---
     // Removed automatically on plugin unload (per PluginAPI.hpp), but PLUGIN_EXIT
     // calls removeLuaFunction defensively to keep teardown symmetric.
+    HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layerfilter", &luaLayerFilter);
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "layershader",        &luaLayerShader);
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "togglelayershader",  &luaToggleLayerShader);
     HyprlandAPI::addLuaFunction(PHANDLE, "HyprWindowShade", "togglewindowshader", &luaToggleWindowShader);
@@ -572,6 +604,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_mWindowManualShaders.clear();
     g_mWindowRuleShaders.clear();
     g_closeDurations.clear();
+    g_layerFilter.clear();
     g_mLayerNamespaceShaderMap.clear();
     g_mWindowClassShaderMap.clear();
     g_mFailedShaderMtimes.clear();
@@ -625,6 +658,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     HyprlandAPI::removeDispatcher(PHANDLE, "layercloseanim");
     HyprlandAPI::removeDispatcher(PHANDLE, "reloadshaders");
 
+    HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layerfilter");
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "layershader");
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "togglelayershader");
     HyprlandAPI::removeLuaFunction(PHANDLE, "HyprWindowShade", "togglewindowshader");

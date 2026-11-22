@@ -24,7 +24,7 @@ LDLIBS   += -lGLESv2 -lEGL -lGL
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+$(TARGET): $(SRC) $(wildcard *.hpp)
 	$(CXX) $(CXXFLAGS) $(SRC) -o $@ $(LDLIBS)
 	@# Guard the two things that pin this .so in memory and break live-reload.
 	@# If either reappears, a reload silently re-runs the OLD build.

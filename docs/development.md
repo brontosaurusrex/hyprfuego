@@ -38,6 +38,8 @@ joins, minimum spacing, monotonic advance and the sixteen-close history.
 ./hyprfuego build
 ./hyprfuego check
 python3 -m unittest discover -s tools -p 'test_*.py'
+g++ -std=c++23 -O2 tools/test_layer_filter.cpp -o build/test-layer-filter
+build/test-layer-filter
 ```
 
 The native plugin requires the exact compositor/header commit documented in the
